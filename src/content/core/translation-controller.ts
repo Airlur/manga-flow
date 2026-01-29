@@ -36,7 +36,11 @@ export class TranslationController {
         onProgress?: (progress: TranslationProgress) => void
     ): Promise<{ success: number; failed: number }> {
         await this.loadSettings();
-        await this.ocrEngine.init(this.settings?.sourceLang || 'ko');
+        // 配置 OCR 引擎
+        this.ocrEngine.configure(this.settings || {});
+        if (this.settings?.ocrEngine !== 'cloud') {
+            await this.ocrEngine.initLocal(this.settings?.sourceLang || 'ko');
+        }
 
         const total = images.length;
         const batchSize = 3;
@@ -90,26 +94,37 @@ export class TranslationController {
         return { success: successCount, failed: failedCount };
     }
 
-    // 翻译单张图片
-    private async translateSingleImage(img: HTMLImageElement): Promise<void> {
-        const imgSrc = img.src;
+    // 翻译单张图片（公开方法，供懒加载调用）
+    // 阶段2：OCR + 翻译，暂不渲染图像
+    private phase2Mode = true; // 阶段2：测试翻译效果
 
-        // 检查缓存
-        const cached = await this.cacheManager.get(imgSrc);
-        if (cached) {
-            console.log('[MangaFlow] 使用缓存');
-            img.src = cached.renderedImage;
-            return;
+    async translateSingleImage(img: HTMLImageElement): Promise<void> {
+        // 确保设置和 OCR 引擎已加载
+        if (!this.settings) {
+            await this.loadSettings();
         }
+        // 配置 OCR 引擎
+        this.ocrEngine.configure(this.settings || {});
+        const sourceLang = this.settings?.sourceLang || 'ko';
+        const targetLang = this.settings?.targetLang || 'zh';
 
-        console.log('[MangaFlow] 开始翻译图片:', imgSrc.substring(0, 50));
+        const imgSrc = img.src || img.getAttribute('data-src') || '';
+        const imgName = imgSrc.substring(imgSrc.lastIndexOf('/') + 1);
 
-        // 1. OCR 识别
-        const ocrResult = await this.ocrEngine.recognize(img);
+        console.log(`[MangaFlow] 🔄 开始处理: ${imgName}`);
+        console.log(`[MangaFlow] 📍 语言: ${sourceLang} → ${targetLang}`);
+
+        // 1. OCR 识别（会自动绘制红框）
+        const ocrStartTime = Date.now();
+        const ocrResult = await this.ocrEngine.recognize(img, sourceLang);
+        const ocrDuration = Date.now() - ocrStartTime;
+
         if (!ocrResult.blocks.length) {
-            console.log('[MangaFlow] 未检测到文字');
+            console.log(`[MangaFlow] ⚠️ ${imgName}: 未检测到有效文字`);
             return;
         }
+
+        console.log(`[MangaFlow] ✅ ${imgName}: OCR 完成 (${ocrDuration}ms)，共 ${ocrResult.blocks.length} 个文本块`);
 
         // 2. 过滤不需要翻译的文本
         const filteredBlocks = ocrResult.blocks.filter((block) =>
@@ -117,22 +132,51 @@ export class TranslationController {
         );
 
         if (!filteredBlocks.length) {
-            console.log('[MangaFlow] 过滤后无需翻译的文本');
+            console.log(`[MangaFlow] ⚠️ ${imgName}: 过滤后无需翻译的文本`);
             return;
         }
 
-        // 3. 翻译
-        const translations: string[] = [];
-        for (const block of filteredBlocks) {
-            const result = await this.translator.translate(
-                block.text,
-                this.settings?.sourceLang || 'ko',
-                'zh'
+        // 3. 批量翻译
+        const engine = this.settings?.translateEngine || 'google';
+        console.log(`[MangaFlow] 🌐 翻译中... (引擎: ${engine}, 共 ${filteredBlocks.length} 条)`);
+
+        const translateStartTime = Date.now();
+        const textsToTranslate = filteredBlocks.map(block => block.text);
+
+        let translations: string[];
+        try {
+            const results = await this.translator.translateBatch(
+                textsToTranslate,
+                sourceLang,
+                targetLang
             );
-            translations.push(result.translated);
+            translations = results.map(r => r.translated);
+        } catch (error) {
+            console.error(`[MangaFlow] ❌ 批量翻译失败:`, error);
+            translations = textsToTranslate.map(() => `[翻译失败: ${(error as Error).message}]`);
+        }
+        const translateDuration = Date.now() - translateStartTime;
+
+        // 输出翻译结果对比
+        console.group(`[MangaFlow] 📝 ${imgName} - 翻译结果`);
+        console.log(`引擎: ${engine} | OCR: ${ocrDuration}ms | 翻译: ${translateDuration}ms`);
+        console.log('─'.repeat(50));
+        filteredBlocks.forEach((block, i) => {
+            console.log(`[${i + 1}] 原文: "${block.text}"`);
+            console.log(`    译文: "${translations[i]}"`);
+            console.log('');
+        });
+        console.groupEnd();
+
+        // ============ 阶段2：到此为止，暂不渲染 ============
+        if (this.phase2Mode) {
+            console.log(`[MangaFlow] 🛑 阶段2模式：翻译完成，跳过图像渲染`);
+            return;
         }
 
+        // ============ 阶段3+：图像渲染待后续启用 ============
         // 4. 背景修复 + 渲染
+        console.log(`[MangaFlow] 🎨 渲染中...`);
         const canvas = await this.imageProcessor.processImage(img, filteredBlocks);
         this.renderer.render(canvas, filteredBlocks, translations, {
             fontSize: this.settings?.fontSize || 14,
@@ -144,19 +188,25 @@ export class TranslationController {
         try {
             const renderedImage = canvas.toDataURL('image/png');
             img.src = renderedImage;
+            console.log(`[MangaFlow] ✅ ${imgName}: 翻译完成！`);
 
-            // 6. 保存缓存
-            await this.cacheManager.set(imgSrc, {
-                imageHash: await this.cacheManager.getImageHash(imgSrc),
-                timestamp: Date.now(),
-                ocrResult,
-                translation: translations.join('\n'),
-                renderedImage,
-            });
+            // 6. 保存缓存 (阶段3启用后使用)
+            // OCR 缓存
+            const ocrEngine = this.settings?.ocrEngine || 'local';
+            await this.cacheManager.setOCR(imgSrc, ocrEngine, ocrResult);
+            // 翻译缓存
+            const translateEngine = this.settings?.translateEngine || 'google';
+            await this.cacheManager.setTranslation(imgSrc, translateEngine,
+                filteredBlocks.map((block, i) => ({
+                    original: block.text,
+                    translated: translations[i],
+                }))
+            );
         } catch (error) {
             // 跨域图片无法导出，抛出友好错误
+            console.error(`[MangaFlow] ❌ ${imgName}: 导出失败`, error);
             if ((error as Error).message.includes('Tainted')) {
-                throw new Error('跨域图片无法导出，请检查图片来源');
+                throw new Error(`跨域图片无法导出: ${imgName}`);
             }
             throw error;
         }

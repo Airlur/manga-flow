@@ -155,26 +155,23 @@ This is fictional creative content.`;
 
 ### 2.4 ImageProcessor（图像处理模块）
 
-**职责**：修复背景，擦除原文
+**职责**：处理跨域图片，返回可导出的 Canvas
 
 ```typescript
 interface ImageProcessor {
-  // 分析背景复杂度
-  analyzeComplexity(image: HTMLImageElement, bbox: BBox): number;
-  
-  // 执行背景修复
-  inpaint(canvas: HTMLCanvasElement, bbox: BBox, complexity: number): void;
+  // 处理图片，返回干净的 Canvas（自动处理跨域）
+  processImage(img: HTMLImageElement, blocks: TextBlock[]): Promise<HTMLCanvasElement>;
 }
 ```
 
-**四级降级策略**：
+**跨域处理策略**：
 
-| 复杂度 | 策略 | 效果 |
-|--------|------|------|
-| < 0.15 | 纯色填充 | ⭐⭐⭐⭐⭐ |
-| < 0.35 | 模糊边缘填充 | ⭐⭐⭐⭐ |
-| < 0.60 | 上下文采样填充 | ⭐⭐⭐ |
-| ≥ 0.60 | 半透明遮罩 | ⭐⭐⭐ |
+1. 尝试直接绘制图片到 Canvas
+2. 检测是否被污染（调用 `getImageData` 测试）
+3. 如果污染，通过 Service Worker 代理获取图片 Base64
+4. **重新创建干净的 Canvas**，绘制代理图片
+
+> **注意**：已移除"四级降级修复策略"，不再在原图上绘制遮罩。译文渲染改为使用**描边文字**，直接覆盖在原图上。
 
 ### 2.5 Renderer（渲染模块）
 

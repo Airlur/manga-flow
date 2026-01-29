@@ -80,11 +80,25 @@ export class SettingsPanel {
             </div>
             <div class="manga-flow-settings__field">
               <label for="mf-api-key">API Key</label>
-              <input type="password" id="mf-api-key" placeholder="例如: sk-xxx..." />
+              <div class="manga-flow-settings__input-group">
+                <input type="password" id="mf-api-key" placeholder="例如: sk-xxx..." />
+                <button type="button" class="manga-flow-settings__toggle-pwd" data-target="mf-api-key" title="显示/隐藏">👁</button>
+              </div>
             </div>
             <div class="manga-flow-settings__field">
               <label for="mf-model">模型名称</label>
-              <input type="text" id="mf-model" placeholder="例如: gpt-4o-mini, deepseek-chat" value="gpt-4o-mini" />
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <select id="mf-model-select" style="flex: 1;">
+                  <option value="">-- 请先获取模型列表 --</option>
+                </select>
+                <button type="button" id="mf-fetch-models" class="manga-flow-settings__btn" style="white-space: nowrap; padding: 6px 12px;">
+                  获取列表
+                </button>
+              </div>
+              <input type="text" id="mf-model" placeholder="或手动输入: gpt-4o-mini, deepseek-chat" style="margin-top: 8px;" />
+              <small style="color: #666; font-size: 12px; margin-top: 4px; display: block;">
+                点击"获取列表"自动加载可用模型，或直接手动输入模型名称
+              </small>
             </div>
           </section>
 
@@ -105,7 +119,10 @@ export class SettingsPanel {
             <h3>DeepL 官方 API 配置</h3>
             <div class="manga-flow-settings__field">
               <label for="mf-deepl-key">API Key</label>
-              <input type="password" id="mf-deepl-key" placeholder="例如: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx" />
+              <div class="manga-flow-settings__input-group">
+                <input type="password" id="mf-deepl-key" placeholder="例如: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx" />
+                <button type="button" class="manga-flow-settings__toggle-pwd" data-target="mf-deepl-key" title="显示/隐藏">👁</button>
+              </div>
             </div>
           </section>
 
@@ -116,12 +133,18 @@ export class SettingsPanel {
               <label for="mf-ocr-engine">OCR 引擎</label>
               <select id="mf-ocr-engine">
                 <option value="local">本地识别 (Tesseract.js，无需配置)</option>
-                <option value="cloud">云端 API（需配置）</option>
+                <option value="cloud">☁️ Google Cloud Vision (精度高，需 API Key)</option>
               </select>
             </div>
             <div class="manga-flow-settings__field manga-flow-settings__field--cloud-ocr" style="display: none;">
-              <label for="mf-cloud-ocr-key">云端 OCR API Key</label>
-              <input type="password" id="mf-cloud-ocr-key" placeholder="云端 OCR 服务的 API Key" />
+              <label for="mf-cloud-ocr-key">Google Cloud Vision API Key</label>
+              <div class="manga-flow-settings__input-group">
+                <input type="password" id="mf-cloud-ocr-key" placeholder="输入你的 Google Cloud Vision API Key" />
+                <button type="button" class="manga-flow-settings__toggle-pwd" data-target="mf-cloud-ocr-key" title="显示/隐藏">👁</button>
+              </div>
+              <small style="color: #666; font-size: 12px; margin-top: 4px; display: block;">
+                在 <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: #1a73e8;">Google Cloud Console</a> 创建 API Key，并启用 Vision API
+              </small>
             </div>
           </section>
 
@@ -188,11 +211,43 @@ export class SettingsPanel {
       cloudOcrField.style.display = ocrSelect.value === 'cloud' ? 'block' : 'none';
     });
 
+    // 获取模型列表按钮
+    const fetchModelsBtn = this.element.querySelector('#mf-fetch-models') as HTMLButtonElement;
+    fetchModelsBtn?.addEventListener('click', () => this.fetchModelList());
+
+    // 模型下拉框同步到手动输入框
+    const modelSelect = this.element.querySelector('#mf-model-select') as HTMLSelectElement;
+    const modelInput = this.element.querySelector('#mf-model') as HTMLInputElement;
+    modelSelect?.addEventListener('change', () => {
+      if (modelSelect.value) {
+        modelInput.value = modelSelect.value;
+      }
+    });
+
     // 字体大小滑块
     const fontSizeInput = this.element.querySelector('#mf-font-size') as HTMLInputElement;
     const fontSizeValue = this.element.querySelector('#mf-font-size-value');
     fontSizeInput?.addEventListener('input', () => {
       if (fontSizeValue) fontSizeValue.textContent = fontSizeInput.value;
+    });
+
+    // 密码显示/隐藏按钮
+    const togglePwdBtns = this.element.querySelectorAll('.manga-flow-settings__toggle-pwd');
+    togglePwdBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = (btn as HTMLElement).dataset.target;
+        if (!targetId) return;
+        const input = this.element?.querySelector(`#${targetId}`) as HTMLInputElement;
+        if (!input) return;
+
+        if (input.type === 'password') {
+          input.type = 'text';
+          btn.textContent = '🔒';
+        } else {
+          input.type = 'password';
+          btn.textContent = '👁';
+        }
+      });
     });
   }
 
@@ -263,6 +318,75 @@ export class SettingsPanel {
     }
   }
 
+  /**
+   * 获取模型列表
+   */
+  private async fetchModelList(): Promise<void> {
+    if (!this.element) return;
+
+    const modelSelect = this.element.querySelector('#mf-model-select') as HTMLSelectElement;
+    const fetchBtn = this.element.querySelector('#mf-fetch-models') as HTMLButtonElement;
+    const apiBase = (this.element.querySelector('#mf-api-base') as HTMLInputElement).value;
+    const apiKey = (this.element.querySelector('#mf-api-key') as HTMLInputElement).value;
+
+    if (!modelSelect || !fetchBtn) return;
+
+    if (!apiBase || !apiKey) {
+      alert('请先填写 API 地址和 API Key');
+      return;
+    }
+
+    fetchBtn.disabled = true;
+    fetchBtn.textContent = '获取中...';
+
+    try {
+      const baseUrl = apiBase.replace(/\/$/, '');
+      const response = await chrome.runtime.sendMessage({
+        type: 'API_REQUEST',
+        url: `${baseUrl}/models`,
+        options: {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+          },
+        },
+      });
+
+      if (!response.success) {
+        throw new Error(response.error || '获取模型列表失败');
+      }
+
+      const models = response.data?.data || [];
+
+      // 清空并填充下拉框
+      modelSelect.innerHTML = '<option value="">-- 选择模型 --</option>';
+
+      if (models.length === 0) {
+        modelSelect.innerHTML = '<option value="">-- 未找到模型 --</option>';
+        return;
+      }
+
+      // 按模型ID排序
+      models.sort((a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id));
+
+      for (const model of models) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = model.id;
+        modelSelect.appendChild(option);
+      }
+
+      console.log(`[MangaFlow] 获取到 ${models.length} 个模型`);
+    } catch (error) {
+      console.error('[MangaFlow] 获取模型列表失败:', error);
+      alert(`获取模型列表失败: ${(error as Error).message}`);
+      modelSelect.innerHTML = '<option value="">-- 获取失败 --</option>';
+    } finally {
+      fetchBtn.disabled = false;
+      fetchBtn.textContent = '获取列表';
+    }
+  }
+
   private getCurrentSettings(): Partial<Settings> {
     if (!this.element) return {};
 
@@ -303,6 +427,24 @@ export class SettingsPanel {
     const cloudOcrField = this.element.querySelector('.manga-flow-settings__field--cloud-ocr') as HTMLElement;
     if (cloudOcrField) {
       cloudOcrField.style.display = settings.ocrEngine === 'cloud' ? 'block' : 'none';
+    }
+
+    // 初始化模型下拉框（如果有已保存的模型）
+    const modelSelect = this.element.querySelector('#mf-model-select') as HTMLSelectElement;
+    const savedModel = settings.model || '';
+    if (modelSelect && savedModel) {
+      // 检查是否已存在该选项
+      const existingOption = Array.from(modelSelect.options).find(opt => opt.value === savedModel);
+      if (!existingOption) {
+        // 添加一个临时选项
+        const option = document.createElement('option');
+        option.value = savedModel;
+        option.textContent = savedModel;
+        option.selected = true;
+        modelSelect.insertBefore(option, modelSelect.firstChild);
+      } else {
+        modelSelect.value = savedModel;
+      }
     }
   }
 

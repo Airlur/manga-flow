@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         settings = {
             sourceLang: 'ko',
             targetLang: 'zh',
-            translateEngine: 'microsoft',
+            translateEngine: 'google',
             fontSize: 14,
             fontColor: '#000000',
             ocrEngine: 'local',
@@ -140,6 +140,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (error) {
             console.error('[MangaFlow Popup] 发送消息失败:', error);
             showTip('请先刷新页面后再使用');
+        }
+    });
+
+    // 清除缓存按钮（只清除翻译缓存，不影响设置和 API Key）
+    const clearCacheBtn = document.getElementById('clear-cache-btn');
+    clearCacheBtn?.addEventListener('click', async () => {
+        if (!confirm('确定要清除所有翻译缓存吗？（不会影响您的设置和 API Key）')) return;
+
+        try {
+            // 使用 localforage 清除翻译缓存
+            const { default: localforage } = await import('localforage');
+            const store = localforage.createInstance({
+                name: 'manga-flow',
+                storeName: 'translations',
+            });
+            await store.clear();
+            showStatus('✅ 翻译缓存已清除！');
+            setTimeout(() => window.close(), 1500);
+        } catch (error) {
+            console.error('[MangaFlow] 清除缓存失败:', error);
+            showTip('清除失败');
         }
     });
 

@@ -1,5 +1,5 @@
 // 漫译 MangaFlow - 渲染器模块
-// 在 Canvas 上渲染翻译后的文字
+// 在 Canvas 上渲染翻译后的文字（描边样式）
 
 import type { TextBlock } from '../../types';
 
@@ -27,64 +27,61 @@ export class Renderer {
             const width = bbox.x1 - bbox.x0;
             const height = bbox.y1 - bbox.y0;
 
-            // 计算合适的字体大小
-            const fontSize = this.calculateFontSize(translation, width, height, options.fontSize);
+            // 计算合适的字体大小（填满原文区域）
+            const fontSize = this.calculateFontSize(translation, width, height);
 
             // 设置字体样式
-            ctx.font = `${fontSize}px ${options.fontFamily}`;
-            ctx.fillStyle = options.fontColor;
+            ctx.font = `bold ${fontSize}px ${options.fontFamily}, sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
 
             // 处理多行文本
             const lines = this.wrapText(ctx, translation, width - 8);
-            const lineHeight = fontSize * 1.3;
+            const lineHeight = fontSize * 1.2;
             const totalHeight = lines.length * lineHeight;
 
             // 计算起始 Y 坐标（垂直居中）
             const startY = bbox.y0 + (height - totalHeight) / 2 + lineHeight / 2;
             const centerX = bbox.x0 + width / 2;
 
-            // 绘制每一行
+            // 绘制每一行（描边样式）
             lines.forEach((line, lineIndex) => {
                 const y = startY + lineIndex * lineHeight;
 
-                // 添加文字阴影（提高可读性）
-                ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
-                ctx.shadowBlur = 2;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
+                // 1. 绘制白色粗描边（背景）
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = Math.max(3, fontSize * 0.15);
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.strokeText(line, centerX, y);
 
+                // 2. 绘制文字主体
+                ctx.fillStyle = options.fontColor;
                 ctx.fillText(line, centerX, y);
             });
-
-            // 重置阴影
-            ctx.shadowColor = 'transparent';
-            ctx.shadowBlur = 0;
         });
     }
 
-    // 计算合适的字体大小
+    // 计算合适的字体大小（填满原文区域）
     private calculateFontSize(
         text: string,
         maxWidth: number,
-        maxHeight: number,
-        baseFontSize: number
+        maxHeight: number
     ): number {
-        // 根据区域大小和文本长度调整字体
-        const areaFactor = Math.min(maxWidth, maxHeight) / 100;
-        const lengthFactor = Math.max(1, 10 / text.length);
+        // 估算行数
+        const charsPerLine = Math.max(1, Math.floor(maxWidth / 16));
+        const estimatedLines = Math.ceil(text.length / charsPerLine);
+        const lineHeight = 1.2;
 
-        let fontSize = baseFontSize * areaFactor * lengthFactor;
+        // 字体大小 = 区域高度 / (行数 * 行高)
+        let fontSize = maxHeight / (estimatedLines * lineHeight);
 
-        // 限制范围
-        fontSize = Math.max(10, Math.min(fontSize, baseFontSize * 1.5));
+        // 确保字体不会太大导致溢出宽度
+        const maxFontByWidth = maxWidth / Math.min(text.length, charsPerLine) * 1.5;
+        fontSize = Math.min(fontSize, maxFontByWidth);
 
-        // 确保不超过区域高度
-        const maxLines = Math.floor(maxHeight / (fontSize * 1.3));
-        if (maxLines < 1) {
-            fontSize = maxHeight / 1.3;
-        }
+        // 限制在合理范围
+        fontSize = Math.max(12, Math.min(fontSize, 48));
 
         return Math.round(fontSize);
     }

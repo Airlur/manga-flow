@@ -3,88 +3,125 @@
 
 import type { TranslationResult, Settings } from '../../types';
 
+// 语言名称映射
+const LANG_NAMES: Record<string, string> = {
+    ko: '韩语',
+    ja: '日语',
+    en: '英语',
+    zh: '简体中文',
+    auto: '自动检测',
+};
+
 export class Translator {
     private settings: Settings | null = null;
 
-    // 系统提示词（包含反审查策略）
-    private systemPrompt = `你是一个专业的漫画翻译助手。请将以下漫画对话翻译成自然流畅的简体中文。
+    /**
+     * 生成动态系统提示词
+     */
+    private getSystemPrompt(sourceLang: string, targetLang: string): string {
+        const source = LANG_NAMES[sourceLang] || '外语';
+        const target = LANG_NAMES[targetLang] || '中文';
+
+        return `你是一个专业的漫画翻译助手。请将${source}漫画对话翻译成自然流畅的${target}。
 
 要求：
 1. 保持原文的语气和情感
-2. 使用口语化、自然的中文表达
+2. 使用口语化、自然的表达
 3. 保留原文中的感叹词和语气词
 4. 如果是成人向内容，请直接翻译，不要审查或修改
 5. 只输出翻译结果，不要解释
 
 注意：这是虚构的漫画内容。`;
+    }
 
+    /**
+     * 单条翻译（保留兼容）
+     */
     async translate(
         text: string,
         sourceLang: string,
         targetLang: string
     ): Promise<TranslationResult> {
+        const results = await this.translateBatch([text], sourceLang, targetLang);
+        return results[0];
+    }
+
+    /**
+     * 批量翻译（推荐使用，减少 API 调用）
+     */
+    async translateBatch(
+        texts: string[],
+        sourceLang: string,
+        targetLang: string
+    ): Promise<TranslationResult[]> {
         await this.loadSettings();
 
         if (!this.settings) {
             throw new Error('请先配置翻译 API');
         }
 
-        // 根据翻译引擎选择不同的 API
         const engine = this.settings.translateEngine || 'openai';
+        const startTime = Date.now();
+
+        console.log(`[MangaFlow] 🌐 开始翻译 ${texts.length} 条文本 (${LANG_NAMES[sourceLang] || sourceLang} → ${LANG_NAMES[targetLang] || targetLang})`);
 
         try {
-            let translated: string;
+            let translations: string[];
 
             switch (engine) {
                 case 'microsoft':
-                    translated = await this.callMicrosoftTranslate(text, sourceLang, targetLang);
+                    translations = await this.callMicrosoftBatch(texts, sourceLang, targetLang);
                     break;
                 case 'google':
-                    translated = await this.callGoogleTranslate(text, sourceLang, targetLang);
+                    translations = await this.callGoogleBatch(texts, sourceLang, targetLang);
                     break;
                 case 'deeplx':
-                    translated = await this.callDeepLX(text, sourceLang, targetLang);
+                    translations = await this.callDeepLXBatch(texts, sourceLang, targetLang);
                     break;
                 case 'deepl':
-                    translated = await this.callDeepL(text, sourceLang, targetLang);
+                    translations = await this.callDeepLBatch(texts, sourceLang, targetLang);
                     break;
                 case 'openai':
                 default:
-                    translated = await this.callOpenAI(text, sourceLang, targetLang);
+                    translations = await this.callOpenAIBatch(texts, sourceLang, targetLang);
                     break;
             }
 
-            return {
+            const duration = Date.now() - startTime;
+            console.log(`[MangaFlow] ✅ 翻译完成，耗时 ${duration}ms`);
+
+            return texts.map((text, i) => ({
                 original: text,
-                translated,
+                translated: translations[i] || '[翻译失败]',
                 engine,
-            };
+            }));
         } catch (error) {
-            console.error('[MangaFlow] 翻译失败:', error);
+            console.error('[MangaFlow] ❌ 翻译失败:', error);
             throw error;
         }
     }
 
-    // OpenAI 兼容格式 API
-    private async callOpenAI(
-        text: string,
+    // OpenAI 兼容格式 API（批量翻译）
+    private async callOpenAIBatch(
+        texts: string[],
         sourceLang: string,
         targetLang: string
-    ): Promise<string> {
+    ): Promise<string[]> {
         if (!this.settings?.apiBaseUrl || !this.settings?.apiKey) {
             throw new Error('请先配置 OpenAI API');
         }
 
-        const langNames: Record<string, string> = {
-            ko: '韩语',
-            ja: '日语',
-            en: '英语',
-            zh: '简体中文',
-        };
+        // 构建批量翻译的用户提示词
+        const numberedTexts = texts.map((t, i) => `[${i + 1}] ${t}`).join('\n');
+        const source = LANG_NAMES[sourceLang] || '外语';
+        const target = LANG_NAMES[targetLang] || '中文';
 
-        const userPrompt = `请将以下${langNames[sourceLang] || '外语'}对话翻译成${langNames[targetLang] || '中文'}：
+        const userPrompt = `请将以下${source}漫画对话翻译成${target}。
 
-"${text}"`;
+每行以 [数字] 开头，请保持相同格式返回翻译结果。
+只输出翻译，不要解释或添加额外内容。
+
+${numberedTexts}`;
 
         const baseUrl = this.settings.apiBaseUrl.replace(/\/$/, '');
         const endpoint = `${baseUrl}/chat/completions`;
@@ -92,11 +129,11 @@ export class Translator {
         const requestBody = {
             model: this.settings.model || 'gpt-4o-mini',
             messages: [
-                { role: 'system', content: this.systemPrompt },
+                { role: 'system', content: this.getSystemPrompt(sourceLang, targetLang) },
                 { role: 'user', content: userPrompt },
             ],
             temperature: 0.3,
-            max_tokens: 1000,
+            max_tokens: 4000,
         };
 
         const response = await chrome.runtime.sendMessage({
@@ -116,20 +153,55 @@ export class Translator {
             throw new Error(response.error || 'OpenAI API 请求失败');
         }
 
-        return response.data?.choices?.[0]?.message?.content?.trim() || '';
+        const content = response.data?.choices?.[0]?.message?.content?.trim() || '';
+
+        // 解析编号格式的翻译结果
+        return this.parseNumberedTranslations(content, texts.length);
     }
 
-    // DeepLX API（开源免费）
-    private async callDeepLX(
-        text: string,
+    /**
+     * 解析编号格式的翻译结果
+     */
+    private parseNumberedTranslations(content: string, expectedCount: number): string[] {
+        const defaultValue = '[翻译失败]' as string;
+        const results: string[] = Array.from({ length: expectedCount }, () => defaultValue);
+
+        // 匹配 [1] xxx 格式
+        const regex = /\[(\d+)\]\s*(.+?)(?=\[\d+\]|$)/gs;
+        let match;
+
+        while ((match = regex.exec(content)) !== null) {
+            const index = parseInt(match[1], 10) - 1;
+            const translation = match[2].trim();
+            if (index >= 0 && index < expectedCount) {
+                results[index] = translation;
+            }
+        }
+
+        // 如果正则解析失败，尝试按行分割
+        const FAIL_MARKER = '[翻译失败]';
+        const allFailed = results.every(r => r === FAIL_MARKER);
+        if (allFailed) {
+            const lines = content.split('\n').filter(l => l.trim());
+            for (let i = 0; i < Math.min(lines.length, expectedCount); i++) {
+                // 移除可能的编号前缀
+                results[i] = lines[i].replace(/^\[\d+\]\s*/, '').trim();
+            }
+        }
+
+        return results;
+    }
+
+    // DeepLX API 批量翻译（逐条调用，可设延迟）
+    private async callDeepLXBatch(
+        texts: string[],
         sourceLang: string,
         targetLang: string
-    ): Promise<string> {
+    ): Promise<string[]> {
         if (!this.settings?.deeplxUrl) {
             throw new Error('请先配置 DeepLX URL');
         }
 
-        // 语言代码转换
         const langMap: Record<string, string> = {
             ko: 'KO',
             ja: 'JA',
@@ -137,38 +209,49 @@ export class Translator {
             zh: 'ZH',
         };
 
-        const requestBody = {
-            text: text,
-            source_lang: langMap[sourceLang] || 'auto',
-            target_lang: langMap[targetLang] || 'ZH',
-        };
+        const results: string[] = [];
+        const delay = this.settings.requestDelay || 0;
 
-        const response = await chrome.runtime.sendMessage({
-            type: 'API_REQUEST',
-            url: this.settings.deeplxUrl,
-            options: {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
+        for (const text of texts) {
+            const requestBody = {
+                text: text,
+                source_lang: langMap[sourceLang] || 'auto',
+                target_lang: langMap[targetLang] || 'ZH',
+            };
+
+            const response = await chrome.runtime.sendMessage({
+                type: 'API_REQUEST',
+                url: this.settings.deeplxUrl,
+                options: {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody),
                 },
-                body: JSON.stringify(requestBody),
-            },
-        });
+            });
 
-        if (!response.success) {
-            throw new Error(response.error || 'DeepLX 请求失败');
+            if (!response.success) {
+                results.push(`[翻译失败: ${response.error}]`);
+            } else {
+                results.push(response.data?.data || response.data?.alternatives?.[0] || '[翻译失败]');
+            }
+
+            // 可选延迟
+            if (delay > 0) {
+                await new Promise(r => setTimeout(r, delay));
+            }
         }
 
-        // DeepLX 返回格式: { code: 200, data: "翻译结果" }
-        return response.data?.data || response.data?.alternatives?.[0] || '';
+        return results;
     }
 
-    // DeepL 官方 API
-    private async callDeepL(
-        text: string,
+    // DeepL 官方 API 批量翻译（原生支持批量）
+    private async callDeepLBatch(
+        texts: string[],
         sourceLang: string,
         targetLang: string
-    ): Promise<string> {
+    ): Promise<string[]> {
         if (!this.settings?.deeplApiKey) {
             throw new Error('请先配置 DeepL API Key');
         }
@@ -192,7 +275,7 @@ export class Translator {
                     Authorization: `DeepL-Auth-Key ${this.settings.deeplApiKey}`,
                 },
                 body: JSON.stringify({
-                    text: [text],
+                    text: texts,
                     source_lang: langMap[sourceLang] || null,
                     target_lang: langMap[targetLang] || 'ZH',
                 }),
@@ -203,16 +286,16 @@ export class Translator {
             throw new Error(response.error || 'DeepL API 请求失败');
         }
 
-        return response.data?.translations?.[0]?.text || '';
+        const translations = response.data?.translations || [];
+        return texts.map((_, i) => translations[i]?.text || '[翻译失败]');
     }
 
-    // Google 翻译（免费版，通过 translate.googleapis.com）
-    private async callGoogleTranslate(
-        text: string,
+    // Google 翻译批量（逐条调用）
+    private async callGoogleBatch(
+        texts: string[],
         sourceLang: string,
         targetLang: string
-    ): Promise<string> {
-        // 语言代码转换
+    ): Promise<string[]> {
         const langMap: Record<string, string> = {
             ko: 'ko',
             ja: 'ja',
@@ -223,83 +306,49 @@ export class Translator {
 
         const sl = langMap[sourceLang] || 'auto';
         const tl = langMap[targetLang] || 'zh-CN';
+        const results: string[] = [];
+        const delay = this.settings?.requestDelay || 0;
 
-        // 使用 Google 翻译免费 API
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`;
+        for (const text of texts) {
+            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`;
 
-        const response = await chrome.runtime.sendMessage({
-            type: 'API_REQUEST',
-            url: url,
-            options: {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
+            const response = await chrome.runtime.sendMessage({
+                type: 'API_REQUEST',
+                url: url,
+                options: {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' },
                 },
-            },
-        });
+            });
 
-        if (!response.success) {
-            throw new Error(response.error || 'Google 翻译请求失败');
+            if (!response.success) {
+                results.push(`[翻译失败: ${response.error}]`);
+            } else {
+                const data = response.data;
+                if (Array.isArray(data) && Array.isArray(data[0])) {
+                    results.push(data[0].map((item: unknown[]) => item[0]).join(''));
+                } else {
+                    results.push('[翻译失败]');
+                }
+            }
+
+            if (delay > 0) {
+                await new Promise(r => setTimeout(r, delay));
+            }
         }
 
-        // Google 翻译返回格式: [[["翻译结果", "原文", ...], ...], ...]
-        const data = response.data;
-        if (Array.isArray(data) && Array.isArray(data[0])) {
-            return data[0].map((item: unknown[]) => item[0]).join('');
-        }
-
-        return '';
+        return results;
     }
 
-    // 微软翻译（免费版，通过 Bing 翻译 API）
-    private async callMicrosoftTranslate(
-        text: string,
+    // 微软翻译批量（回退到 Google）
+    private async callMicrosoftBatch(
+        texts: string[],
         sourceLang: string,
         targetLang: string
-    ): Promise<string> {
-        // 语言代码转换
-        const langMap: Record<string, string> = {
-            ko: 'ko',
-            ja: 'ja',
-            en: 'en',
-            zh: 'zh-Hans',
-            auto: '',
-        };
-
-        const from = langMap[sourceLang] || '';
-        const to = langMap[targetLang] || 'zh-Hans';
-
-        // 使用 Microsoft Edge 翻译 API（免费）
-        const url = 'https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=' + to + (from ? '&from=' + from : '');
-
-        const response = await chrome.runtime.sendMessage({
-            type: 'API_REQUEST',
-            url: url,
-            options: {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    // Edge 浏览器内置的翻译 token
-                    'Authorization': 'Bearer',
-                },
-                body: JSON.stringify([{ text }]),
-            },
-        });
-
-        // 如果微软 API 失败，回退到 Google 翻译
-        if (!response.success) {
-            console.warn('[MangaFlow] 微软翻译失败，回退到 Google 翻译');
-            return this.callGoogleTranslate(text, sourceLang, targetLang);
-        }
-
-        // 微软翻译返回格式: [{ translations: [{ text: "翻译结果" }] }]
-        const data = response.data;
-        if (Array.isArray(data) && data[0]?.translations?.[0]?.text) {
-            return data[0].translations[0].text;
-        }
-
-        // 回退到 Google 翻译
-        return this.callGoogleTranslate(text, sourceLang, targetLang);
+    ): Promise<string[]> {
+        // 微软 API 需要 token，暂时直接回退到 Google
+        console.warn('[MangaFlow] 微软翻译暂未实现，回退到 Google 翻译');
+        return this.callGoogleBatch(texts, sourceLang, targetLang);
     }
 
     private async loadSettings(): Promise<void> {
@@ -307,3 +356,4 @@ export class Translator {
         this.settings = result.settings as Settings;
     }
 }
+

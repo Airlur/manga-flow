@@ -20,6 +20,8 @@ export interface Settings {
     // OCR 设置
     ocrEngine: 'local' | 'cloud';
     cloudOcrKey: string;
+    // 请求延迟（毫秒，用于有 RPM 限制的 API）
+    requestDelay?: number;
 }
 
 // OCR 结果

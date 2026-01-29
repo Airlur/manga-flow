@@ -1,5 +1,5 @@
 // 漫译 MangaFlow - 图片检测模块
-// 检测页面中的漫画图片，监听懒加载
+// 检测页面中的漫画图片，支持懒加载
 
 import { getSiteConfig } from '../utils/site-adapter';
 import type { SiteConfig } from '../../types';
@@ -11,6 +11,15 @@ export class ImageDetector {
     private siteConfig: SiteConfig;
     private onNewImage: ((img: HTMLImageElement) => void) | null = null;
 
+    // 排除关键词（封面、缩略图、头像等）
+    private static readonly EXCLUDE_KEYWORDS = [
+        'cover', 'thumbnail', 'avatar', 'logo', 'banner', 'poster', 'icon',
+        'button', 'badge', 'emoji', 'sticker', 'ad', 'sponsor', 'favicon'
+    ];
+
+    // 常见的懒加载属性
+    private static readonly LAZY_ATTRS = ['data-src', 'data-lazy-src', 'data-original', 'data-lazy', 'lazysrc'];
+
     constructor() {
         this.siteConfig = getSiteConfig(window.location.href);
         this.init();
@@ -21,17 +30,43 @@ export class ImageDetector {
         this.setupIntersectionObserver();
     }
 
+    // 获取图片的真实 URL（处理懒加载）
+    private getImageRealSrc(img: HTMLImageElement): string {
+        // 优先检查懒加载属性
+        for (const attr of ImageDetector.LAZY_ATTRS) {
+            const lazySrc = img.getAttribute(attr);
+            if (lazySrc && this.isValidImageUrl(lazySrc)) {
+                return lazySrc;
+            }
+        }
+        // 其次使用站点配置的懒加载属性
+        if (this.siteConfig.lazyLoadAttr) {
+            const lazySrc = img.getAttribute(this.siteConfig.lazyLoadAttr);
+            if (lazySrc && this.isValidImageUrl(lazySrc)) {
+                return lazySrc;
+            }
+        }
+        // 最后使用 src
+        return img.src || '';
+    }
+
+    // 检查是否为有效的图片 URL
+    private isValidImageUrl(url: string): boolean {
+        if (!url) return false;
+        // 排除占位图
+        const placeholders = ['placeholder', 'loading', 'blank', 'data:image/gif', 'data:image/png;base64,iVBOR'];
+        return !placeholders.some(p => url.toLowerCase().includes(p));
+    }
+
     // 设置 DOM 变化监听器（懒加载图片检测）
     private setupMutationObserver(): void {
         this.observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 mutation.addedNodes.forEach((node) => {
                     if (node instanceof HTMLElement) {
-                        // 检查新添加的图片
                         if (node.tagName === 'IMG') {
                             this.checkImage(node as HTMLImageElement);
                         }
-                        // 检查新添加的元素内部的图片
                         node.querySelectorAll?.('img')?.forEach((img) => {
                             this.checkImage(img as HTMLImageElement);
                         });
@@ -49,7 +84,7 @@ export class ImageDetector {
             childList: true,
             subtree: true,
             attributes: true,
-            attributeFilter: ['src', this.siteConfig.lazyLoadAttr],
+            attributeFilter: ['src', ...ImageDetector.LAZY_ATTRS, this.siteConfig.lazyLoadAttr].filter(Boolean) as string[],
         });
     }
 
@@ -59,29 +94,33 @@ export class ImageDetector {
             (entries) => {
                 entries.forEach((entry) => {
                     if (entry.isIntersecting && entry.target instanceof HTMLImageElement) {
-                        // 图片进入视口，可以处理
-                        if (this.onNewImage) {
-                            this.onNewImage(entry.target);
+                        const src = this.getImageRealSrc(entry.target);
+                        if (src && !this.processedImages.has(src)) {
+                            console.log('[MangaFlow] 图片进入视口:', src.substring(src.lastIndexOf('/') + 1));
+                            if (this.onNewImage) {
+                                this.onNewImage(entry.target);
+                            }
                         }
                     }
                 });
             },
-            { rootMargin: '200px' } // 提前 200px 开始检测
+            { rootMargin: '500px' }  // 提前 500px 开始检测
         );
     }
 
     // 检查单个图片是否为漫画图片
     private checkImage(img: HTMLImageElement): void {
-        const src = img.src || img.getAttribute(this.siteConfig.lazyLoadAttr) || '';
+        const src = this.getImageRealSrc(img);
         if (!src || this.processedImages.has(src)) return;
 
-        // 等待图片加载完成
-        if (!img.complete) {
+        // 等待图片加载完成（针对已有 src 的图片）
+        if (img.src && !img.complete) {
             img.addEventListener('load', () => this.checkImage(img), { once: true });
             return;
         }
 
         if (this.isComicImage(img)) {
+            console.log('[MangaFlow] ✓ 识别为漫画图片:', src.substring(src.lastIndexOf('/') + 1));
             this.processedImages.add(src);
             this.intersectionObserver?.observe(img);
         }
@@ -89,19 +128,46 @@ export class ImageDetector {
 
     // 判断是否为漫画图片
     isComicImage(img: HTMLImageElement): boolean {
-        // 最小尺寸要求
-        const minWidth = 300;
-        const minHeight = 300;
+        const src = this.getImageRealSrc(img);
+        if (!src) return false;
 
-        const width = img.naturalWidth || img.width;
-        const height = img.naturalHeight || img.height;
+        const srcLower = src.toLowerCase();
+        const className = (img.className || '').toLowerCase();
+        const id = (img.id || '').toLowerCase();
+        const alt = (img.alt || '').toLowerCase();
+        const combined = srcLower + className + id + alt;
 
-        if (width < minWidth || height < minHeight) return false;
+        // 1. 排除封面/缩略图/广告等
+        if (ImageDetector.EXCLUDE_KEYWORDS.some(kw => combined.includes(kw))) {
+            return false;
+        }
 
-        // 检查是否匹配站点配置的选择器
+        // 2. 检查是否是漫画图片 URL 模式（序号命名）
+        const isSequentialImage = /\/\d{1,3}\.(webp|jpg|jpeg|png|gif)$/i.test(src) ||  // 06.webp
+            /\/[a-z]+_\d{2,3}\.(jpg|jpeg|png|webp|gif)$/i.test(src) ||                  // mr_004.jpg
+            /\/\d+\/\d+\/[^/]+\.(jpg|jpeg|png|webp|gif)$/i.test(src);                   // /chapter/page/file.jpg
+
+        // 3. 尺寸检查（使用 naturalWidth 或显示尺寸）
+        const width = img.naturalWidth || img.width || parseInt(img.getAttribute('width') || '0');
+        const height = img.naturalHeight || img.height || parseInt(img.getAttribute('height') || '0');
+
+        // 如果尺寸已知，进行检查
+        if (width > 0 && height > 0) {
+            if (width < 200 || height < 200) return false;
+        }
+
+        // 4. 检查是否在正文容器内
+        if (this.siteConfig.containerSelector) {
+            const container = document.querySelector(this.siteConfig.containerSelector);
+            if (container && !container.contains(img)) {
+                return false;
+            }
+        }
+
+        // 5. 检查是否匹配站点配置的选择器
         if (this.siteConfig.imageSelector) {
-            const selectors = this.siteConfig.imageSelector.split(',').map((s) => s.trim());
-            const matchesSelector = selectors.some((selector) => {
+            const selectors = this.siteConfig.imageSelector.split(',').map(s => s.trim());
+            const matchesSelector = selectors.some(selector => {
                 try {
                     return img.matches(selector);
                 } catch {
@@ -111,37 +177,35 @@ export class ImageDetector {
             if (matchesSelector) return true;
         }
 
-        // 通用判断：宽高比和尺寸
-        const aspectRatio = width / height;
-        // 漫画图片通常比较长（竖向）或接近正方形
-        if (aspectRatio < 0.3 || aspectRatio > 3) return false;
+        // 6. 序号命名的图片优先通过
+        if (isSequentialImage) return true;
 
-        // 尺寸合理
-        if (width >= minWidth && height >= minHeight) return true;
+        // 7. 一般大图通过
+        if (width >= 400 && height >= 400) return true;
 
         return false;
     }
 
-    // 获取当前页面所有漫画图片
+    // 获取当前页面所有漫画图片（用于初始翻译）
     getComicImages(): HTMLImageElement[] {
         const images: HTMLImageElement[] = [];
-        const selector = this.siteConfig.imageSelector || 'img';
+        const allImages = document.querySelectorAll<HTMLImageElement>('img');
 
-        document.querySelectorAll<HTMLImageElement>(selector).forEach((img) => {
-            if (this.isComicImage(img)) {
+        console.log('[MangaFlow] 扫描页面图片，共', allImages.length, '张');
+
+        allImages.forEach((img) => {
+            const src = this.getImageRealSrc(img);
+            // 注意：这里不检查 processedImages，因为这是用于初始获取
+            // processedImages 只用于懒加载时避免重复处理
+            if (src && this.isComicImage(img)) {
+                console.log('[MangaFlow] + 添加图片:', src.substring(src.lastIndexOf('/') + 1));
                 images.push(img);
+                // 标记为已处理，避免懒加载时重复
+                this.processedImages.add(src);
             }
         });
 
-        // 如果配置选择器没匹配到，尝试通用选择
-        if (images.length === 0) {
-            document.querySelectorAll<HTMLImageElement>('img').forEach((img) => {
-                if (this.isComicImage(img)) {
-                    images.push(img);
-                }
-            });
-        }
-
+        console.log('[MangaFlow] 最终筛选出', images.length, '张漫画图片');
         return images;
     }
 

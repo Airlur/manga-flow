@@ -1,3 +1,67 @@
+const scriptRel = "modulepreload";
+const assetsURL = function(dep) {
+  return "/" + dep;
+};
+const seen = {};
+const __vitePreload = function preload(baseModule, deps, importerUrl) {
+  let promise = Promise.resolve();
+  if (deps && deps.length > 0) {
+    document.getElementsByTagName("link");
+    const cspNonceMeta = document.querySelector(
+      "meta[property=csp-nonce]"
+    );
+    const cspNonce = (cspNonceMeta == null ? void 0 : cspNonceMeta.nonce) || (cspNonceMeta == null ? void 0 : cspNonceMeta.getAttribute("nonce"));
+    promise = Promise.allSettled(
+      deps.map((dep) => {
+        dep = assetsURL(dep);
+        if (dep in seen) return;
+        seen[dep] = true;
+        const isCss = dep.endsWith(".css");
+        const cssSelector = isCss ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${dep}"]${cssSelector}`)) {
+          return;
+        }
+        const link = document.createElement("link");
+        link.rel = isCss ? "stylesheet" : scriptRel;
+        if (!isCss) {
+          link.as = "script";
+        }
+        link.crossOrigin = "";
+        link.href = dep;
+        if (cspNonce) {
+          link.setAttribute("nonce", cspNonce);
+        }
+        document.head.appendChild(link);
+        if (isCss) {
+          return new Promise((res, rej) => {
+            link.addEventListener("load", res);
+            link.addEventListener(
+              "error",
+              () => rej(new Error(`Unable to preload CSS for ${dep}`))
+            );
+          });
+        }
+      })
+    );
+  }
+  function handlePreloadError(err) {
+    const e = new Event("vite:preloadError", {
+      cancelable: true
+    });
+    e.payload = err;
+    window.dispatchEvent(e);
+    if (!e.defaultPrevented) {
+      throw err;
+    }
+  }
+  return promise.then((res) => {
+    for (const item of res || []) {
+      if (item.status !== "rejected") continue;
+      handlePreloadError(item.reason);
+    }
+    return baseModule().catch(handlePreloadError);
+  });
+};
 document.addEventListener("DOMContentLoaded", async () => {
   const sourceLangSelect = document.getElementById("source-lang");
   const targetLangSelect = document.getElementById("target-lang");
@@ -13,7 +77,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     settings = {
       sourceLang: "ko",
       targetLang: "zh",
-      translateEngine: "microsoft",
+      translateEngine: "google",
       fontSize: 14,
       fontColor: "#000000",
       ocrEngine: "local"
@@ -86,6 +150,26 @@ document.addEventListener("DOMContentLoaded", async () => {
     } catch (error) {
       console.error("[MangaFlow Popup] 发送消息失败:", error);
       showTip("请先刷新页面后再使用");
+    }
+  });
+  const clearCacheBtn = document.getElementById("clear-cache-btn");
+  clearCacheBtn == null ? void 0 : clearCacheBtn.addEventListener("click", async () => {
+    if (!confirm("确定要清除所有翻译缓存吗？（不会影响您的设置和 API Key）")) return;
+    try {
+      const { default: localforage } = await __vitePreload(async () => {
+        const { default: localforage2 } = await import("../chunks/localforage.js").then((n) => n.l);
+        return { default: localforage2 };
+      }, true ? [] : void 0);
+      const store = localforage.createInstance({
+        name: "manga-flow",
+        storeName: "translations"
+      });
+      await store.clear();
+      showStatus("✅ 翻译缓存已清除！");
+      setTimeout(() => window.close(), 1500);
+    } catch (error) {
+      console.error("[MangaFlow] 清除缓存失败:", error);
+      showTip("清除失败");
     }
   });
   function showTip(message) {

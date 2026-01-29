@@ -7,8 +7,9 @@ import type { SiteConfig } from '../../types';
 const siteConfigs: Record<string, SiteConfig> = {
     'comix.to': {
         name: 'Comix.to',
-        imageSelector: 'img.chapter-img, img[data-src], .chapter-content img',
-        containerSelector: '.chapter-content, .reading-content',
+        // 精确匹配正文图片，排除封面区域
+        imageSelector: '.reading-content img, #readerarea img, .chapter-content img, .chapter-images img',
+        containerSelector: '.reading-content, #readerarea, .chapter-content',
         lazyLoadAttr: 'data-src',
         language: 'ko',
         features: {
@@ -29,8 +30,8 @@ const siteConfigs: Record<string, SiteConfig> = {
     },
     'omegascans.org': {
         name: 'OmegaScans',
-        imageSelector: 'img[class*="chapter"], .container img, main img',
-        containerSelector: '.container, main',
+        imageSelector: 'img[class*="chapter"], .container img, main img, .reader-area img',
+        containerSelector: '.container, main, .reader-area',
         lazyLoadAttr: 'data-src',
         language: 'en',
         features: {
@@ -40,8 +41,8 @@ const siteConfigs: Record<string, SiteConfig> = {
     },
     'manhwaread.com': {
         name: 'ManhwaRead',
-        imageSelector: '.page-break img, .reading-content img',
-        containerSelector: '.reading-content',
+        imageSelector: '.page-break img, .reading-content img, .chapter-content img',
+        containerSelector: '.reading-content, .chapter-content',
         lazyLoadAttr: 'data-src',
         language: 'en',
         features: {
@@ -49,13 +50,15 @@ const siteConfigs: Record<string, SiteConfig> = {
             infiniteScroll: false,
         },
     },
+    // 可扩展更多站点...
 };
 
-// 默认配置
+// 默认通用配置（适用于未适配的站点）
 const defaultConfig: SiteConfig = {
     name: 'Default',
-    imageSelector: 'img',
-    containerSelector: 'body',
+    // 通用选择器，尝试匹配常见的阅读容器
+    imageSelector: '.reading-content img, .chapter-content img, .reader-area img, article img, main img, img',
+    containerSelector: '.reading-content, .chapter-content, .reader-area, article, main',
     lazyLoadAttr: 'data-src',
     language: 'auto',
     features: {
@@ -79,7 +82,7 @@ export function getSiteConfig(url: string): SiteConfig {
         console.warn('[MangaFlow] URL 解析失败:', error);
     }
 
-    console.log('[MangaFlow] 使用默认配置');
+    console.log('[MangaFlow] 使用默认配置（通用模式）');
     return defaultConfig;
 }
 

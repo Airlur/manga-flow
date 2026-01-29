@@ -178,7 +178,7 @@ chrome.runtime.onInstalled.addListener((details) => {
       settings: {
         sourceLang: "ko",
         targetLang: "zh",
-        translateEngine: "microsoft",
+        translateEngine: "google",
         apiBaseUrl: "",
         apiKey: "",
         model: "gpt-4o-mini",
