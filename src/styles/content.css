@@ -552,7 +552,6 @@
 .manga-flow-ocr-box {
   position: absolute;
   border: 2px solid #ff0000;
-  background: rgba(255, 0, 0, 0.1);
   pointer-events: none;
   z-index: 9999;
 }
@@ -567,4 +566,32 @@
   padding: 1px 4px;
   border-radius: 2px;
   white-space: nowrap;
+}
+
+/* ===== ROI 红框（裁剪检测） ===== */
+.manga-flow-roi-box {
+  position: absolute;
+  border: 2px solid #ff6b00;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.manga-flow-roi-label {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  background: #ff6b00;
+  color: #ffffff;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+/* ===== 遮罩 绿框（调试用） ===== */
+.manga-flow-mask-box {
+  position: absolute;
+  border: 2px solid #00c853;
+  pointer-events: none;
+  z-index: 9999;
 }

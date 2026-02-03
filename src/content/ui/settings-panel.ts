@@ -2,6 +2,8 @@
 // 黑白简洁风格的设置界面，支持多翻译引擎
 
 import type { Settings } from '../../types';
+import { showToast } from '@/content/ui/toast';
+import { DEV_MODE } from '../../config/app-config';
 
 interface SettingsPanelOptions {
   onSave: (settings: Settings) => void;
@@ -160,6 +162,44 @@ export class SettingsPanel {
               <input type="color" id="mf-font-color" value="#000000" />
             </div>
           </section>
+
+          <!-- 开发模式（仅调试） -->
+          <section class="manga-flow-settings__section manga-flow-settings__section--dev" style="display: none;">
+            <h3>开发模式</h3>
+            <div class="manga-flow-settings__field">
+              <label>
+                <input type="checkbox" id="mf-dev-mode" />
+                启用开发模式（默认开启）
+              </label>
+            </div>
+            <div class="manga-flow-settings__field">
+              <label for="mf-dev-phase">执行阶段</label>
+              <select id="mf-dev-phase">
+                <option value="roi">阶段 A：仅 ROI（不调用 OCR）</option>
+                <option value="ocr">阶段 B：ROI + OCR（不翻译）</option>
+                <option value="translate">阶段 C：OCR + 翻译（不渲染）</option>
+                <option value="full">阶段 D：完整流程（擦除 + 渲染）</option>
+              </select>
+            </div>
+            <div class="manga-flow-settings__field">
+              <label>
+                <input type="checkbox" id="mf-show-ocr-boxes" />
+                显示 OCR 红框
+              </label>
+            </div>
+            <div class="manga-flow-settings__field">
+              <label>
+                <input type="checkbox" id="mf-show-roi-boxes" />
+                显示 ROI 橙框
+              </label>
+            </div>
+            <div class="manga-flow-settings__field">
+              <label>
+                <input type="checkbox" id="mf-show-mask-boxes" />
+                显示 遮罩 绿框
+              </label>
+            </div>
+          </section>
         </div>
         <div class="manga-flow-settings__footer">
           <button class="manga-flow-settings__btn manga-flow-settings__btn--cancel">取消</button>
@@ -169,6 +209,14 @@ export class SettingsPanel {
     `;
 
     document.body.appendChild(this.element);
+
+    const devSection = this.element.querySelector('.manga-flow-settings__section--dev') as HTMLElement | null;
+    if (!DEV_MODE && devSection) {
+      devSection.remove();
+    } else if (devSection) {
+      devSection.style.display = 'block';
+    }
+
     this.bindEvents();
     this.loadSettings();
   }
@@ -230,6 +278,15 @@ export class SettingsPanel {
     fontSizeInput?.addEventListener('input', () => {
       if (fontSizeValue) fontSizeValue.textContent = fontSizeInput.value;
     });
+
+    // 开发模式联动
+    const devModeInput = this.element.querySelector('#mf-dev-mode') as HTMLInputElement | null;
+    const devPhaseSelect = this.element.querySelector('#mf-dev-phase') as HTMLSelectElement | null;
+    if (devModeInput && devPhaseSelect) {
+      devModeInput.addEventListener('change', () => {
+        devPhaseSelect.disabled = !devModeInput.checked;
+      });
+    }
 
     // 密码显示/隐藏按钮
     const togglePwdBtns = this.element.querySelectorAll('.manga-flow-settings__toggle-pwd');
@@ -401,8 +458,21 @@ export class SettingsPanel {
   }
 
   private async loadSettings(): Promise<void> {
-    const result = await chrome.storage.local.get('settings');
-    const settings = result.settings as Settings | undefined;
+    if (!chrome?.runtime?.id) {
+      console.warn('[MangaFlow] 扩展上下文已失效，无法读取设置');
+      return;
+    }
+
+    let settings: Settings | undefined;
+    try {
+      const result = await chrome.storage.local.get('settings');
+      settings = result.settings as Settings | undefined;
+    } catch (error) {
+      console.error('[MangaFlow] 读取设置失败:', error);
+      showToast('扩展已更新/重载，请刷新页面', 'warning');
+      return;
+    }
+
     if (!settings || !this.element) return;
 
     // 填充设置值
@@ -427,6 +497,26 @@ export class SettingsPanel {
     const cloudOcrField = this.element.querySelector('.manga-flow-settings__field--cloud-ocr') as HTMLElement;
     if (cloudOcrField) {
       cloudOcrField.style.display = settings.ocrEngine === 'cloud' ? 'block' : 'none';
+    }
+
+    // 开发模式（仅开发环境）
+    if (DEV_MODE) {
+      const devMode = settings.devMode ?? true;
+      const devPhase = settings.devPhase || 'roi';
+      const devModeInput = this.element.querySelector('#mf-dev-mode') as HTMLInputElement | null;
+      const devPhaseSelect = this.element.querySelector('#mf-dev-phase') as HTMLSelectElement | null;
+      const showOcrInput = this.element.querySelector('#mf-show-ocr-boxes') as HTMLInputElement | null;
+      const showRoiInput = this.element.querySelector('#mf-show-roi-boxes') as HTMLInputElement | null;
+      const showMaskInput = this.element.querySelector('#mf-show-mask-boxes') as HTMLInputElement | null;
+
+      if (devModeInput) devModeInput.checked = devMode;
+      if (devPhaseSelect) {
+        devPhaseSelect.value = devPhase;
+        devPhaseSelect.disabled = !devMode;
+      }
+      if (showOcrInput) showOcrInput.checked = settings.showOcrBoxes ?? true;
+      if (showRoiInput) showRoiInput.checked = settings.showRoiBoxes ?? true;
+      if (showMaskInput) showMaskInput.checked = settings.showMaskBoxes ?? false;
     }
 
     // 初始化模型下拉框（如果有已保存的模型）
@@ -464,6 +554,11 @@ export class SettingsPanel {
       cloudOcrKey: (this.element.querySelector('#mf-cloud-ocr-key') as HTMLInputElement).value,
       fontSize: parseInt((this.element.querySelector('#mf-font-size') as HTMLInputElement).value),
       fontColor: (this.element.querySelector('#mf-font-color') as HTMLInputElement).value,
+      devMode: DEV_MODE ? (this.element.querySelector('#mf-dev-mode') as HTMLInputElement | null)?.checked ?? true : undefined,
+      devPhase: DEV_MODE ? (this.element.querySelector('#mf-dev-phase') as HTMLSelectElement | null)?.value as Settings['devPhase'] : undefined,
+      showOcrBoxes: DEV_MODE ? (this.element.querySelector('#mf-show-ocr-boxes') as HTMLInputElement | null)?.checked ?? true : undefined,
+      showRoiBoxes: DEV_MODE ? (this.element.querySelector('#mf-show-roi-boxes') as HTMLInputElement | null)?.checked ?? true : undefined,
+      showMaskBoxes: DEV_MODE ? (this.element.querySelector('#mf-show-mask-boxes') as HTMLInputElement | null)?.checked ?? false : undefined,
     };
 
     this.options.onSave(settings);

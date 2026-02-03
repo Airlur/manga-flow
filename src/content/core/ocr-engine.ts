@@ -4,6 +4,7 @@
 
 import Tesseract from 'tesseract.js';
 import type { OCRResult, TextBlock, Settings } from '../../types';
+import { DebugOverlayManager } from './debug-overlay';
 
 export type OCREngineType = 'local' | 'cloud';
 
@@ -81,15 +82,17 @@ export class OCREngine {
     async recognize(
         image: HTMLImageElement | HTMLCanvasElement,
         lang: string = 'ko',
-        debug = this.debugMode
+        debug = this.debugMode,
+        filename?: string
     ): Promise<OCRResult> {
-        console.log(`[MangaFlow] 🔍 开始 OCR 识别 (${this.engineType})...`);
+        const logName = filename || 'Image';
+        console.log(`[MangaFlow] 🔍 开始 OCR 识别 [${logName}] (${this.engineType})...`);
         const startTime = performance.now();
 
         let result: OCRResult;
 
         if (this.engineType === 'cloud' && this.cloudApiKey) {
-            result = await this.recognizeWithGoogleVision(image);
+            result = await this.recognizeWithGoogleVision(image, filename);
         } else {
             result = await this.recognizeWithTesseract(image, lang);
         }
@@ -112,6 +115,78 @@ export class OCREngine {
         }
 
         return result;
+    }
+
+    /**
+     * 仅识别指定区域（裁剪后 OCR）
+     */
+    async recognizeRegions(
+        image: HTMLImageElement | HTMLCanvasElement,
+        regions: Array<{ x0: number; y0: number; x1: number; y1: number }>,
+        lang: string = 'ko',
+        debug = this.debugMode,
+        filename?: string
+    ): Promise<OCRResult> {
+        const safeImage = await this.ensureSafeImage(image);
+        const allBlocks: TextBlock[] = [];
+
+        for (let i = 0; i < regions.length; i++) {
+            const region = regions[i];
+            const cropCanvas = this.cropRegionToCanvas(safeImage, region);
+            const name = filename ? `${filename}#ROI${i + 1}` : `ROI${i + 1}`;
+
+            let result: OCRResult;
+            if (this.engineType === 'cloud' && this.cloudApiKey) {
+                result = await this.recognizeWithGoogleVision(cropCanvas, name);
+                const regionArea = Math.max(1, cropCanvas.width * cropCanvas.height);
+                if (this.shouldFallback(result.blocks, regionArea)) {
+                    const enhanced = this.preprocessCanvasForOcr(cropCanvas);
+                    console.log(`[MangaFlow] OCR enhance: ${name} (${enhanced.mode})`);
+                    const alt = await this.recognizeWithGoogleVision(enhanced.canvas, `${name}#ENH`);
+                    const scaledAltBlocks = this.scaleBlocks(alt.blocks, 1 / enhanced.scale);
+                    const altResult: OCRResult = {
+                        text: scaledAltBlocks.map((b) => b.text).join('\n'),
+                        confidence: scaledAltBlocks.length > 0
+                            ? scaledAltBlocks.reduce((sum, b) => sum + b.confidence, 0) / scaledAltBlocks.length
+                            : 0,
+                        blocks: scaledAltBlocks,
+                    };
+                    if (this.countMeaningfulBlocks(altResult.blocks) > this.countMeaningfulBlocks(result.blocks)) {
+                        result = altResult;
+                    }
+                }
+            } else {
+                result = await this.recognizeWithTesseract(cropCanvas, lang);
+            }
+
+            // ???????
+            result.blocks.forEach((block) => {
+                allBlocks.push({
+                    text: block.text,
+                    confidence: block.confidence,
+                    bbox: {
+                        x0: block.bbox.x0 + region.x0,
+                        y0: block.bbox.y0 + region.y0,
+                        x1: block.bbox.x1 + region.x0,
+                        y1: block.bbox.y1 + region.y0,
+                    },
+                });
+            });
+        }
+
+        const merged: OCRResult = {
+            text: allBlocks.map((b) => b.text).join('\n'),
+            confidence: allBlocks.length > 0
+                ? allBlocks.reduce((sum, b) => sum + b.confidence, 0) / allBlocks.length
+                : 0,
+            blocks: allBlocks,
+        };
+
+        if (debug && allBlocks.length > 0) {
+            this.drawDebugBoxes(image, allBlocks);
+        }
+
+        return merged;
     }
 
     /**
@@ -160,15 +235,19 @@ export class OCREngine {
     /**
      * 使用 Google Cloud Vision API 识别
      */
-    private async recognizeWithGoogleVision(image: HTMLImageElement | HTMLCanvasElement): Promise<OCRResult> {
+    private async recognizeWithGoogleVision(
+        image: HTMLImageElement | HTMLCanvasElement,
+        filename?: string
+    ): Promise<OCRResult> {
         if (!this.cloudApiKey) {
             throw new Error('请在设置中配置 Google Cloud Vision API Key');
         }
 
+        const logName = filename || 'Image';
+        console.log(`[MangaFlow] ☁️ 调用 Google Cloud Vision API [${logName}]...`);
+
         // 将图片转为 base64
         const base64 = await this.imageToBase64(image);
-
-        console.log('[MangaFlow] ☁️ 调用 Google Cloud Vision API...');
 
         const response = await fetch(
             `https://vision.googleapis.com/v1/images:annotate?key=${this.cloudApiKey}`,
@@ -276,6 +355,92 @@ export class OCREngine {
         return merged;
     }
 
+
+    private isMeaningfulText(text: string): boolean {
+        const trimmed = text.trim();
+        if (!trimmed) return false;
+        if (/[가-힯]/.test(trimmed)) return trimmed.length >= 2;
+        if (/[぀-ヿ]/.test(trimmed)) return trimmed.length >= 2;
+        if (/[㐀-鿿]/.test(trimmed)) return trimmed.length >= 2;
+        if (/[a-zA-Z]/.test(trimmed)) return trimmed.length >= 3;
+        if (/\d/.test(trimmed)) return trimmed.length >= 3;
+        return false;
+    }
+
+    private countMeaningfulBlocks(blocks: TextBlock[]): number {
+        return blocks.filter((block) => this.isMeaningfulText(block.text)).length;
+    }
+
+    private shouldFallback(blocks: TextBlock[], regionArea: number): boolean {
+        if (!blocks.length) return true;
+        const meaningful = this.countMeaningfulBlocks(blocks);
+        if (meaningful === 0) return true;
+        if (meaningful <= 1) {
+            const avgArea = blocks.reduce((sum, b) => sum + (b.bbox.x1 - b.bbox.x0) * (b.bbox.y1 - b.bbox.y0), 0) / Math.max(1, blocks.length);
+            if (avgArea < regionArea * 0.005) return true;
+        }
+        return false;
+    }
+
+    private preprocessCanvasForOcr(input: HTMLCanvasElement): { canvas: HTMLCanvasElement; scale: number; mode: string } {
+        const maxTarget = 1000;
+        const maxDim = Math.max(input.width, input.height);
+        let scale = 2;
+        if (maxDim * scale > maxTarget) {
+            scale = Math.max(1, maxTarget / maxDim);
+        }
+
+        const out = document.createElement('canvas');
+        out.width = Math.max(1, Math.round(input.width * scale));
+        out.height = Math.max(1, Math.round(input.height * scale));
+        const ctx = out.getContext('2d', { willReadFrequently: true })!;
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(input, 0, 0, out.width, out.height);
+
+        const imageData = ctx.getImageData(0, 0, out.width, out.height);
+        const data = imageData.data;
+        let sum = 0;
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            sum += 0.299 * r + 0.587 * g + 0.114 * b;
+        }
+        const mean = sum / Math.max(1, data.length / 4);
+        const invert = mean < 110;
+        const contrast = 1.4;
+
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            gray = (gray - 128) * contrast + 128;
+            if (invert) gray = 255 - gray;
+            gray = Math.max(0, Math.min(255, gray));
+            data[i] = gray;
+            data[i + 1] = gray;
+            data[i + 2] = gray;
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+        return { canvas: out, scale, mode: invert ? 'invert' : 'gray' };
+    }
+
+    private scaleBlocks(blocks: TextBlock[], scale: number): TextBlock[] {
+        return blocks.map((block) => ({
+            text: block.text,
+            confidence: block.confidence,
+            bbox: {
+                x0: Math.round(block.bbox.x0 * scale),
+                y0: Math.round(block.bbox.y0 * scale),
+                x1: Math.round(block.bbox.x1 * scale),
+                y1: Math.round(block.bbox.y1 * scale),
+            },
+        }));
+    }
+
+
     /**
      * 将图片转为 base64（不含 data:image/xxx;base64, 前缀）
      * 处理跨域图片：先尝试直接转换，失败则通过 fetch 获取
@@ -327,53 +492,83 @@ export class OCREngine {
         }
     }
 
+    private async ensureSafeImage(image: HTMLImageElement | HTMLCanvasElement): Promise<HTMLImageElement | HTMLCanvasElement> {
+        if (image instanceof HTMLCanvasElement) return image;
+
+        // 尝试直接读取像素
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            const ctx = canvas.getContext('2d')!;
+            ctx.drawImage(image, 0, 0);
+            ctx.getImageData(0, 0, 1, 1);
+            return image;
+        } catch {
+            const base64 = await this.fetchImageAsBase64(image.src);
+            return await this.loadImageFromBase64(base64);
+        }
+    }
+
+    private cropRegionToCanvas(
+        image: HTMLImageElement | HTMLCanvasElement,
+        region: { x0: number; y0: number; x1: number; y1: number }
+    ): HTMLCanvasElement {
+        const width = Math.max(1, Math.floor(region.x1 - region.x0));
+        const height = Math.max(1, Math.floor(region.y1 - region.y0));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(
+            image,
+            region.x0,
+            region.y0,
+            width,
+            height,
+            0,
+            0,
+            width,
+            height
+        );
+        return canvas;
+    }
+
+    private loadImageFromBase64(base64: string): Promise<HTMLImageElement> {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            // fetchImageAsBase64 返回的是不带前缀的纯 base64
+            img.src = base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`;
+        });
+    }
+
     /**
      * 阶段1：绘制调试红框
      */
     private drawDebugBoxes(image: HTMLImageElement | HTMLCanvasElement, blocks: TextBlock[]): void {
-        const parent = image.parentElement;
-        if (!parent) return;
+        DebugOverlayManager.getInstance().setOcrBoxes(image, blocks);
+    }
 
-        const parentStyle = window.getComputedStyle(parent);
-        if (parentStyle.position === 'static') {
-            parent.style.position = 'relative';
-        }
-
-        const rect = image.getBoundingClientRect();
-        const naturalWidth = image instanceof HTMLImageElement ? image.naturalWidth : image.width;
-        const naturalHeight = image instanceof HTMLImageElement ? image.naturalHeight : image.height;
-        const scaleX = rect.width / naturalWidth;
-        const scaleY = rect.height / naturalHeight;
-
-        const parentRect = parent.getBoundingClientRect();
-        const offsetX = rect.left - parentRect.left;
-        const offsetY = rect.top - parentRect.top;
-
-        // 移除旧的调试框
-        parent.querySelectorAll('.manga-flow-ocr-box').forEach((el) => el.remove());
-
-        // 绘制红框
-        blocks.forEach((block, index) => {
-            const box = document.createElement('div');
-            box.className = 'manga-flow-ocr-box';
-            box.style.left = `${offsetX + block.bbox.x0 * scaleX}px`;
-            box.style.top = `${offsetY + block.bbox.y0 * scaleY}px`;
-            box.style.width = `${(block.bbox.x1 - block.bbox.x0) * scaleX}px`;
-            box.style.height = `${(block.bbox.y1 - block.bbox.y0) * scaleY}px`;
-
-            const label = document.createElement('span');
-            label.className = 'manga-flow-ocr-label';
-            label.textContent = `${index + 1}`;
-            box.appendChild(label);
-
-            parent.appendChild(box);
+    logBlocks(blocks: TextBlock[], label: string = 'OCR 识别结果'): void {
+        if (!blocks.length) return;
+        console.group(`[MangaFlow] 📝 ${label}:`);
+        blocks.forEach((block, i) => {
+            const conf = Math.round(block.confidence * 100);
+            const { x0, y0, x1, y1 } = block.bbox;
+            console.log(`  [${i + 1}] "${block.text}" (置信度: ${conf}%, bbox: ${x0},${y0},${x1},${y1})`);
         });
+        console.groupEnd();
+    }
 
-        console.log('[MangaFlow] 🔴 已绘制调试红框');
+    drawDebugBoxesFor(image: HTMLImageElement | HTMLCanvasElement, blocks: TextBlock[], debug: boolean): void {
+        if (!debug || !blocks.length) return;
+        this.drawDebugBoxes(image, blocks);
     }
 
     clearDebugBoxes(): void {
-        document.querySelectorAll('.manga-flow-ocr-box').forEach((el) => el.remove());
+        DebugOverlayManager.getInstance().clearOcrBoxes();
     }
 
     setDebugMode(enabled: boolean): void {

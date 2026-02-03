@@ -153,6 +153,43 @@
       (_a = this.element) == null ? void 0 : _a.remove();
     }
   }
+  let toastContainer = null;
+  function ensureContainer() {
+    if (toastContainer && document.body.contains(toastContainer)) {
+      return toastContainer;
+    }
+    toastContainer = document.createElement("div");
+    toastContainer.id = "manga-flow-toast-container";
+    toastContainer.className = "manga-flow-toast-container";
+    document.body.appendChild(toastContainer);
+    return toastContainer;
+  }
+  function showToast(message, type = "info", duration = 3e3) {
+    const container = ensureContainer();
+    const toast = document.createElement("div");
+    toast.className = `manga-flow-toast manga-flow-toast--${type}`;
+    const icons = {
+      success: "✓",
+      error: "✗",
+      warning: "⚠",
+      info: "ℹ"
+    };
+    toast.innerHTML = `
+    <span class="manga-flow-toast__icon">${icons[type]}</span>
+    <span class="manga-flow-toast__message">${message}</span>
+  `;
+    container.appendChild(toast);
+    requestAnimationFrame(() => {
+      toast.classList.add("manga-flow-toast--visible");
+    });
+    setTimeout(() => {
+      toast.classList.remove("manga-flow-toast--visible");
+      toast.classList.add("manga-flow-toast--hiding");
+      setTimeout(() => {
+        toast.remove();
+      }, 300);
+    }, duration);
+  }
   class SettingsPanel {
     constructor(options) {
       this.element = null;
@@ -302,6 +339,44 @@
               <input type="color" id="mf-font-color" value="#000000" />
             </div>
           </section>
+
+          <!-- 开发模式（仅调试） -->
+          <section class="manga-flow-settings__section manga-flow-settings__section--dev" style="display: none;">
+            <h3>开发模式</h3>
+            <div class="manga-flow-settings__field">
+              <label>
+                <input type="checkbox" id="mf-dev-mode" />
+                启用开发模式（默认开启）
+              </label>
+            </div>
+            <div class="manga-flow-settings__field">
+              <label for="mf-dev-phase">执行阶段</label>
+              <select id="mf-dev-phase">
+                <option value="roi">阶段 A：仅 ROI（不调用 OCR）</option>
+                <option value="ocr">阶段 B：ROI + OCR（不翻译）</option>
+                <option value="translate">阶段 C：OCR + 翻译（不渲染）</option>
+                <option value="full">阶段 D：完整流程（擦除 + 渲染）</option>
+              </select>
+            </div>
+            <div class="manga-flow-settings__field">
+              <label>
+                <input type="checkbox" id="mf-show-ocr-boxes" />
+                显示 OCR 红框
+              </label>
+            </div>
+            <div class="manga-flow-settings__field">
+              <label>
+                <input type="checkbox" id="mf-show-roi-boxes" />
+                显示 ROI 橙框
+              </label>
+            </div>
+            <div class="manga-flow-settings__field">
+              <label>
+                <input type="checkbox" id="mf-show-mask-boxes" />
+                显示 遮罩 绿框
+              </label>
+            </div>
+          </section>
         </div>
         <div class="manga-flow-settings__footer">
           <button class="manga-flow-settings__btn manga-flow-settings__btn--cancel">取消</button>
@@ -310,6 +385,10 @@
       </div>
     `;
       document.body.appendChild(this.element);
+      const devSection = this.element.querySelector(".manga-flow-settings__section--dev");
+      if (devSection) {
+        devSection.style.display = "block";
+      }
       this.bindEvents();
       this.loadSettings();
     }
@@ -352,6 +431,13 @@
       fontSizeInput == null ? void 0 : fontSizeInput.addEventListener("input", () => {
         if (fontSizeValue) fontSizeValue.textContent = fontSizeInput.value;
       });
+      const devModeInput = this.element.querySelector("#mf-dev-mode");
+      const devPhaseSelect = this.element.querySelector("#mf-dev-phase");
+      if (devModeInput && devPhaseSelect) {
+        devModeInput.addEventListener("change", () => {
+          devPhaseSelect.disabled = !devModeInput.checked;
+        });
+      }
       const togglePwdBtns = this.element.querySelectorAll(".manga-flow-settings__toggle-pwd");
       togglePwdBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -488,8 +574,20 @@
       };
     }
     async loadSettings() {
-      const result = await chrome.storage.local.get("settings");
-      const settings = result.settings;
+      var _a;
+      if (!((_a = chrome == null ? void 0 : chrome.runtime) == null ? void 0 : _a.id)) {
+        console.warn("[MangaFlow] 扩展上下文已失效，无法读取设置");
+        return;
+      }
+      let settings;
+      try {
+        const result = await chrome.storage.local.get("settings");
+        settings = result.settings;
+      } catch (error) {
+        console.error("[MangaFlow] 读取设置失败:", error);
+        showToast("扩展已更新/重载，请刷新页面", "warning");
+        return;
+      }
       if (!settings || !this.element) return;
       this.element.querySelector("#mf-source-lang").value = settings.sourceLang || "ko";
       this.element.querySelector("#mf-target-lang").value = settings.targetLang || "zh";
@@ -509,6 +607,23 @@
       if (cloudOcrField) {
         cloudOcrField.style.display = settings.ocrEngine === "cloud" ? "block" : "none";
       }
+      {
+        const devMode = settings.devMode ?? true;
+        const devPhase = settings.devPhase || "roi";
+        const devModeInput = this.element.querySelector("#mf-dev-mode");
+        const devPhaseSelect = this.element.querySelector("#mf-dev-phase");
+        const showOcrInput = this.element.querySelector("#mf-show-ocr-boxes");
+        const showRoiInput = this.element.querySelector("#mf-show-roi-boxes");
+        const showMaskInput = this.element.querySelector("#mf-show-mask-boxes");
+        if (devModeInput) devModeInput.checked = devMode;
+        if (devPhaseSelect) {
+          devPhaseSelect.value = devPhase;
+          devPhaseSelect.disabled = !devMode;
+        }
+        if (showOcrInput) showOcrInput.checked = settings.showOcrBoxes ?? true;
+        if (showRoiInput) showRoiInput.checked = settings.showRoiBoxes ?? true;
+        if (showMaskInput) showMaskInput.checked = settings.showMaskBoxes ?? false;
+      }
       const modelSelect = this.element.querySelector("#mf-model-select");
       const savedModel = settings.model || "";
       if (modelSelect && savedModel) {
@@ -525,6 +640,7 @@
       }
     }
     save() {
+      var _a, _b, _c, _d, _e;
       if (!this.element) return;
       const settings = {
         sourceLang: this.element.querySelector("#mf-source-lang").value,
@@ -538,7 +654,12 @@
         ocrEngine: this.element.querySelector("#mf-ocr-engine").value,
         cloudOcrKey: this.element.querySelector("#mf-cloud-ocr-key").value,
         fontSize: parseInt(this.element.querySelector("#mf-font-size").value),
-        fontColor: this.element.querySelector("#mf-font-color").value
+        fontColor: this.element.querySelector("#mf-font-color").value,
+        devMode: ((_a = this.element.querySelector("#mf-dev-mode")) == null ? void 0 : _a.checked) ?? true,
+        devPhase: (_b = this.element.querySelector("#mf-dev-phase")) == null ? void 0 : _b.value,
+        showOcrBoxes: ((_c = this.element.querySelector("#mf-show-ocr-boxes")) == null ? void 0 : _c.checked) ?? true,
+        showRoiBoxes: ((_d = this.element.querySelector("#mf-show-roi-boxes")) == null ? void 0 : _d.checked) ?? true,
+        showMaskBoxes: ((_e = this.element.querySelector("#mf-show-mask-boxes")) == null ? void 0 : _e.checked) ?? false
       };
       this.options.onSave(settings);
       this.hide();
@@ -2003,6 +2124,188 @@
     ...Tesseract
   };
   const Tesseract$1 = /* @__PURE__ */ getDefaultExportFromCjs(src);
+  const _DebugOverlayManager = class _DebugOverlayManager {
+    constructor() {
+      this.enabled = true;
+      this.showOcr = true;
+      this.showRoi = true;
+      this.showMask = false;
+      this.data = /* @__PURE__ */ new WeakMap();
+      this.images = /* @__PURE__ */ new Set();
+    }
+    static getInstance() {
+      if (!_DebugOverlayManager.instance) {
+        _DebugOverlayManager.instance = new _DebugOverlayManager();
+      }
+      return _DebugOverlayManager.instance;
+    }
+    applySettings(settings) {
+      if (!settings) return;
+      const devMode = settings.devMode ?? true;
+      this.setEnabled(!!devMode);
+      this.setShowFlags({
+        ocr: settings.showOcrBoxes ?? true,
+        roi: settings.showRoiBoxes ?? true,
+        mask: settings.showMaskBoxes ?? false
+      });
+    }
+    setEnabled(enabled) {
+      if (this.enabled === enabled) return;
+      this.enabled = enabled;
+      if (!enabled) {
+        this.clearAll();
+      } else {
+        this.renderAll();
+      }
+    }
+    setShowFlags(flags) {
+      this.showOcr = flags.ocr;
+      this.showRoi = flags.roi;
+      this.showMask = flags.mask;
+      if (this.enabled) {
+        this.renderAll();
+      } else {
+        this.clearAll();
+      }
+    }
+    setOcrBoxes(image, blocks) {
+      if (!this.enabled) return;
+      const boxes = blocks.map((b) => b.bbox);
+      const data = this.ensureData(image);
+      data.ocr = boxes;
+      this.renderImage(image);
+    }
+    setRoiBoxes(image, boxes, labelPrefix) {
+      if (!this.enabled) return;
+      const data = this.ensureData(image);
+      data.roi = { boxes, labelPrefix };
+      this.renderImage(image);
+    }
+    setMaskBoxes(image, boxes) {
+      if (!this.enabled) return;
+      const data = this.ensureData(image);
+      data.mask = boxes;
+      this.renderImage(image);
+    }
+    clearOcrBoxes(image) {
+      this.clearBoxes(image, "ocr");
+    }
+    clearRoiBoxes(image) {
+      this.clearBoxes(image, "roi");
+    }
+    clearMaskBoxes(image) {
+      this.clearBoxes(image, "mask");
+    }
+    ensureData(image) {
+      const existing = this.data.get(image);
+      if (existing) return existing;
+      const data = {};
+      this.data.set(image, data);
+      this.images.add(image);
+      this.ensureDebugId(image);
+      return data;
+    }
+    ensureDebugId(image) {
+      const dataset = image instanceof HTMLImageElement ? image.dataset : image.dataset;
+      if (!dataset) return "";
+      if (!dataset.mfDebugId) {
+        dataset.mfDebugId = `mf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+      }
+      return dataset.mfDebugId;
+    }
+    renderAll() {
+      this.images.forEach((image) => this.renderImage(image));
+    }
+    renderImage(image) {
+      var _a, _b, _c, _d;
+      this.clearBoxes(image);
+      if (!this.enabled) return;
+      const data = this.data.get(image);
+      if (!data) return;
+      if (this.showOcr && ((_a = data.ocr) == null ? void 0 : _a.length)) {
+        this.drawBoxes(image, "ocr", data.ocr);
+      }
+      if (this.showRoi && ((_c = (_b = data.roi) == null ? void 0 : _b.boxes) == null ? void 0 : _c.length)) {
+        this.drawBoxes(image, "roi", data.roi.boxes, data.roi.labelPrefix);
+      }
+      if (this.showMask && ((_d = data.mask) == null ? void 0 : _d.length)) {
+        this.drawBoxes(image, "mask", data.mask);
+      }
+    }
+    clearAll() {
+      this.clearBoxes();
+    }
+    clearBoxes(image, type) {
+      if (image) {
+        this.clearBoxesForImage(image, type);
+        return;
+      }
+      const selector = type ? `.manga-flow-${type}-box` : ".manga-flow-ocr-box, .manga-flow-roi-box, .manga-flow-mask-box";
+      document.querySelectorAll(selector).forEach((el) => el.remove());
+    }
+    clearBoxesForImage(image, type) {
+      const parent = image.parentElement;
+      if (!parent) return;
+      const id = this.ensureDebugId(image);
+      if (!id) return;
+      const selector = type ? `.manga-flow-${type}-box[data-mf-debug-id="${id}"]` : `.manga-flow-ocr-box[data-mf-debug-id="${id}"], .manga-flow-roi-box[data-mf-debug-id="${id}"], .manga-flow-mask-box[data-mf-debug-id="${id}"]`;
+      parent.querySelectorAll(selector).forEach((el) => el.remove());
+    }
+    drawBoxes(image, type, boxes, labelPrefix) {
+      const parent = image.parentElement;
+      if (!parent) return;
+      const parentStyle = window.getComputedStyle(parent);
+      if (parentStyle.position === "static") {
+        parent.style.position = "relative";
+      }
+      const rect = image.getBoundingClientRect();
+      const naturalWidth = image instanceof HTMLImageElement ? image.naturalWidth : image.width;
+      const naturalHeight = image instanceof HTMLImageElement ? image.naturalHeight : image.height;
+      if (!naturalWidth || !naturalHeight) return;
+      const scaleX = rect.width / naturalWidth;
+      const scaleY = rect.height / naturalHeight;
+      const parentRect = parent.getBoundingClientRect();
+      const offsetX = rect.left - parentRect.left;
+      const offsetY = rect.top - parentRect.top;
+      const id = this.ensureDebugId(image);
+      boxes.forEach((box, index) => {
+        let x0 = box.x0;
+        let y0 = box.y0;
+        let x1 = box.x1;
+        let y1 = box.y1;
+        if (type === "ocr") {
+          const w = x1 - x0;
+          const h = y1 - y0;
+          const px = w * 0.2;
+          const py = h * 0.2;
+          x0 = Math.max(0, x0 - px);
+          y0 = Math.max(0, y0 - py);
+          x1 = x1 + px;
+          y1 = y1 + py;
+        }
+        const el = document.createElement("div");
+        el.className = `manga-flow-${type}-box`;
+        el.dataset.mfDebugId = id;
+        el.style.left = `${offsetX + x0 * scaleX}px`;
+        el.style.top = `${offsetY + y0 * scaleY}px`;
+        el.style.width = `${(x1 - x0) * scaleX}px`;
+        el.style.height = `${(y1 - y0) * scaleY}px`;
+        if (type === "ocr" || type === "roi") {
+          const label = document.createElement("span");
+          label.className = `manga-flow-${type}-label`;
+          if (type === "roi" && labelPrefix) {
+            label.textContent = `${labelPrefix}-${index + 1}`;
+          } else {
+            label.textContent = `${index + 1}`;
+          }
+          el.appendChild(label);
+        }
+        parent.appendChild(el);
+      });
+    }
+  };
+  _DebugOverlayManager.instance = null;
+  let DebugOverlayManager = _DebugOverlayManager;
   class OCREngine {
     constructor() {
       this.worker = null;
@@ -2065,12 +2368,13 @@
     /**
      * 识别图片中的文字（主入口）
      */
-    async recognize(image, lang = "ko", debug = this.debugMode) {
-      console.log(`[MangaFlow] 🔍 开始 OCR 识别 (${this.engineType})...`);
+    async recognize(image, lang = "ko", debug = this.debugMode, filename) {
+      const logName = filename || "Image";
+      console.log(`[MangaFlow] 🔍 开始 OCR 识别 [${logName}] (${this.engineType})...`);
       const startTime = performance.now();
       let result;
       if (this.engineType === "cloud" && this.cloudApiKey) {
-        result = await this.recognizeWithGoogleVision(image);
+        result = await this.recognizeWithGoogleVision(image, filename);
       } else {
         result = await this.recognizeWithTesseract(image, lang);
       }
@@ -2087,6 +2391,60 @@
         }
       }
       return result;
+    }
+    /**
+     * 仅识别指定区域（裁剪后 OCR）
+     */
+    async recognizeRegions(image, regions, lang = "ko", debug = this.debugMode, filename) {
+      const safeImage = await this.ensureSafeImage(image);
+      const allBlocks = [];
+      for (let i = 0; i < regions.length; i++) {
+        const region = regions[i];
+        const cropCanvas = this.cropRegionToCanvas(safeImage, region);
+        const name = filename ? `${filename}#ROI${i + 1}` : `ROI${i + 1}`;
+        let result;
+        if (this.engineType === "cloud" && this.cloudApiKey) {
+          result = await this.recognizeWithGoogleVision(cropCanvas, name);
+          const regionArea = Math.max(1, cropCanvas.width * cropCanvas.height);
+          if (this.shouldFallback(result.blocks, regionArea)) {
+            const enhanced = this.preprocessCanvasForOcr(cropCanvas);
+            console.log(`[MangaFlow] OCR enhance: ${name} (${enhanced.mode})`);
+            const alt = await this.recognizeWithGoogleVision(enhanced.canvas, `${name}#ENH`);
+            const scaledAltBlocks = this.scaleBlocks(alt.blocks, 1 / enhanced.scale);
+            const altResult = {
+              text: scaledAltBlocks.map((b) => b.text).join("\n"),
+              confidence: scaledAltBlocks.length > 0 ? scaledAltBlocks.reduce((sum, b) => sum + b.confidence, 0) / scaledAltBlocks.length : 0,
+              blocks: scaledAltBlocks
+            };
+            if (this.countMeaningfulBlocks(altResult.blocks) > this.countMeaningfulBlocks(result.blocks)) {
+              result = altResult;
+            }
+          }
+        } else {
+          result = await this.recognizeWithTesseract(cropCanvas, lang);
+        }
+        result.blocks.forEach((block) => {
+          allBlocks.push({
+            text: block.text,
+            confidence: block.confidence,
+            bbox: {
+              x0: block.bbox.x0 + region.x0,
+              y0: block.bbox.y0 + region.y0,
+              x1: block.bbox.x1 + region.x0,
+              y1: block.bbox.y1 + region.y0
+            }
+          });
+        });
+      }
+      const merged = {
+        text: allBlocks.map((b) => b.text).join("\n"),
+        confidence: allBlocks.length > 0 ? allBlocks.reduce((sum, b) => sum + b.confidence, 0) / allBlocks.length : 0,
+        blocks: allBlocks
+      };
+      if (debug && allBlocks.length > 0) {
+        this.drawDebugBoxes(image, allBlocks);
+      }
+      return merged;
     }
     /**
      * 使用 Tesseract.js 识别
@@ -2127,13 +2485,14 @@
     /**
      * 使用 Google Cloud Vision API 识别
      */
-    async recognizeWithGoogleVision(image) {
+    async recognizeWithGoogleVision(image, filename) {
       var _a, _b, _c, _d, _e, _f, _g;
       if (!this.cloudApiKey) {
         throw new Error("请在设置中配置 Google Cloud Vision API Key");
       }
+      const logName = filename || "Image";
+      console.log(`[MangaFlow] ☁️ 调用 Google Cloud Vision API [${logName}]...`);
       const base64 = await this.imageToBase64(image);
-      console.log("[MangaFlow] ☁️ 调用 Google Cloud Vision API...");
       const response = await fetch(
         `https://vision.googleapis.com/v1/images:annotate?key=${this.cloudApiKey}`,
         {
@@ -2216,6 +2575,81 @@
       merged.push(current);
       return merged;
     }
+    isMeaningfulText(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+      if (/[가-힯]/.test(trimmed)) return trimmed.length >= 2;
+      if (/[぀-ヿ]/.test(trimmed)) return trimmed.length >= 2;
+      if (/[㐀-鿿]/.test(trimmed)) return trimmed.length >= 2;
+      if (/[a-zA-Z]/.test(trimmed)) return trimmed.length >= 3;
+      if (/\d/.test(trimmed)) return trimmed.length >= 3;
+      return false;
+    }
+    countMeaningfulBlocks(blocks) {
+      return blocks.filter((block) => this.isMeaningfulText(block.text)).length;
+    }
+    shouldFallback(blocks, regionArea) {
+      if (!blocks.length) return true;
+      const meaningful = this.countMeaningfulBlocks(blocks);
+      if (meaningful === 0) return true;
+      if (meaningful <= 1) {
+        const avgArea = blocks.reduce((sum, b) => sum + (b.bbox.x1 - b.bbox.x0) * (b.bbox.y1 - b.bbox.y0), 0) / Math.max(1, blocks.length);
+        if (avgArea < regionArea * 5e-3) return true;
+      }
+      return false;
+    }
+    preprocessCanvasForOcr(input) {
+      const maxTarget = 1e3;
+      const maxDim = Math.max(input.width, input.height);
+      let scale = 2;
+      if (maxDim * scale > maxTarget) {
+        scale = Math.max(1, maxTarget / maxDim);
+      }
+      const out = document.createElement("canvas");
+      out.width = Math.max(1, Math.round(input.width * scale));
+      out.height = Math.max(1, Math.round(input.height * scale));
+      const ctx = out.getContext("2d", { willReadFrequently: true });
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(input, 0, 0, out.width, out.height);
+      const imageData = ctx.getImageData(0, 0, out.width, out.height);
+      const data = imageData.data;
+      let sum = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        sum += 0.299 * r + 0.587 * g + 0.114 * b;
+      }
+      const mean = sum / Math.max(1, data.length / 4);
+      const invert = mean < 110;
+      const contrast = 1.4;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        gray = (gray - 128) * contrast + 128;
+        if (invert) gray = 255 - gray;
+        gray = Math.max(0, Math.min(255, gray));
+        data[i] = gray;
+        data[i + 1] = gray;
+        data[i + 2] = gray;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      return { canvas: out, scale, mode: invert ? "invert" : "gray" };
+    }
+    scaleBlocks(blocks, scale) {
+      return blocks.map((block) => ({
+        text: block.text,
+        confidence: block.confidence,
+        bbox: {
+          x0: Math.round(block.bbox.x0 * scale),
+          y0: Math.round(block.bbox.y0 * scale),
+          x1: Math.round(block.bbox.x1 * scale),
+          y1: Math.round(block.bbox.y1 * scale)
+        }
+      }));
+    }
     /**
      * 将图片转为 base64（不含 data:image/xxx;base64, 前缀）
      * 处理跨域图片：先尝试直接转换，失败则通过 fetch 获取
@@ -2257,42 +2691,71 @@
         throw new Error("无法获取图片: " + error.message);
       }
     }
+    async ensureSafeImage(image) {
+      if (image instanceof HTMLCanvasElement) return image;
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(image, 0, 0);
+        ctx.getImageData(0, 0, 1, 1);
+        return image;
+      } catch {
+        const base64 = await this.fetchImageAsBase64(image.src);
+        return await this.loadImageFromBase64(base64);
+      }
+    }
+    cropRegionToCanvas(image, region) {
+      const width = Math.max(1, Math.floor(region.x1 - region.x0));
+      const height = Math.max(1, Math.floor(region.y1 - region.y0));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(
+        image,
+        region.x0,
+        region.y0,
+        width,
+        height,
+        0,
+        0,
+        width,
+        height
+      );
+      return canvas;
+    }
+    loadImageFromBase64(base64) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = base64.startsWith("data:") ? base64 : `data:image/png;base64,${base64}`;
+      });
+    }
     /**
      * 阶段1：绘制调试红框
      */
     drawDebugBoxes(image, blocks) {
-      const parent = image.parentElement;
-      if (!parent) return;
-      const parentStyle = window.getComputedStyle(parent);
-      if (parentStyle.position === "static") {
-        parent.style.position = "relative";
-      }
-      const rect = image.getBoundingClientRect();
-      const naturalWidth = image instanceof HTMLImageElement ? image.naturalWidth : image.width;
-      const naturalHeight = image instanceof HTMLImageElement ? image.naturalHeight : image.height;
-      const scaleX = rect.width / naturalWidth;
-      const scaleY = rect.height / naturalHeight;
-      const parentRect = parent.getBoundingClientRect();
-      const offsetX = rect.left - parentRect.left;
-      const offsetY = rect.top - parentRect.top;
-      parent.querySelectorAll(".manga-flow-ocr-box").forEach((el) => el.remove());
-      blocks.forEach((block, index) => {
-        const box = document.createElement("div");
-        box.className = "manga-flow-ocr-box";
-        box.style.left = `${offsetX + block.bbox.x0 * scaleX}px`;
-        box.style.top = `${offsetY + block.bbox.y0 * scaleY}px`;
-        box.style.width = `${(block.bbox.x1 - block.bbox.x0) * scaleX}px`;
-        box.style.height = `${(block.bbox.y1 - block.bbox.y0) * scaleY}px`;
-        const label = document.createElement("span");
-        label.className = "manga-flow-ocr-label";
-        label.textContent = `${index + 1}`;
-        box.appendChild(label);
-        parent.appendChild(box);
+      DebugOverlayManager.getInstance().setOcrBoxes(image, blocks);
+    }
+    logBlocks(blocks, label = "OCR 识别结果") {
+      if (!blocks.length) return;
+      console.group(`[MangaFlow] 📝 ${label}:`);
+      blocks.forEach((block, i) => {
+        const conf = Math.round(block.confidence * 100);
+        const { x0, y0, x1, y1 } = block.bbox;
+        console.log(`  [${i + 1}] "${block.text}" (置信度: ${conf}%, bbox: ${x0},${y0},${x1},${y1})`);
       });
-      console.log("[MangaFlow] 🔴 已绘制调试红框");
+      console.groupEnd();
+    }
+    drawDebugBoxesFor(image, blocks, debug) {
+      if (!debug || !blocks.length) return;
+      this.drawDebugBoxes(image, blocks);
     }
     clearDebugBoxes() {
-      document.querySelectorAll(".manga-flow-ocr-box").forEach((el) => el.remove());
+      DebugOverlayManager.getInstance().clearOcrBoxes();
     }
     setDebugMode(enabled) {
       this.debugMode = enabled;
@@ -2351,6 +2814,7 @@
      * 批量翻译（推荐使用，减少 API 调用）
      */
     async translateBatch(texts, sourceLang, targetLang) {
+      var _a, _b, _c, _d;
       await this.loadSettings();
       if (!this.settings) {
         throw new Error("请先配置翻译 API");
@@ -2360,24 +2824,46 @@
       console.log(`[MangaFlow] 🌐 开始翻译 ${texts.length} 条文本 (${LANG_NAMES[sourceLang] || sourceLang} → ${LANG_NAMES[targetLang] || targetLang})`);
       try {
         let translations;
-        switch (engine) {
-          case "microsoft":
-            translations = await this.callMicrosoftBatch(texts, sourceLang, targetLang);
+        let lastError;
+        const MAX_RETRIES = 3;
+        const BASE_DELAY = 3e3;
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            if (attempt > 0) {
+              const delay = BASE_DELAY * Math.pow(2, attempt - 1);
+              console.log(`[MangaFlow] ⏳ 触发重试机制 (第 ${attempt}/${MAX_RETRIES} 次), 等待 ${delay}ms...`);
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            }
+            switch (engine) {
+              case "microsoft":
+                translations = await this.callMicrosoftBatch(texts, sourceLang, targetLang);
+                break;
+              case "google":
+                translations = await this.callGoogleBatch(texts, sourceLang, targetLang);
+                break;
+              case "deeplx":
+                translations = await this.callDeepLXBatch(texts, sourceLang, targetLang);
+                break;
+              case "deepl":
+                translations = await this.callDeepLBatch(texts, sourceLang, targetLang);
+                break;
+              case "openai":
+              default:
+                translations = await this.callOpenAIBatch(texts, sourceLang, targetLang);
+                break;
+            }
             break;
-          case "google":
-            translations = await this.callGoogleBatch(texts, sourceLang, targetLang);
-            break;
-          case "deeplx":
-            translations = await this.callDeepLXBatch(texts, sourceLang, targetLang);
-            break;
-          case "deepl":
-            translations = await this.callDeepLBatch(texts, sourceLang, targetLang);
-            break;
-          case "openai":
-          default:
-            translations = await this.callOpenAIBatch(texts, sourceLang, targetLang);
-            break;
+          } catch (error) {
+            lastError = error;
+            const isRateLimit = ((_a = error.message) == null ? void 0 : _a.includes("429")) || ((_b = error.message) == null ? void 0 : _b.toLowerCase().includes("rate limit")) || ((_c = error.message) == null ? void 0 : _c.toLowerCase().includes("quota")) || ((_d = error.message) == null ? void 0 : _d.toLowerCase().includes("too many requests"));
+            if (isRateLimit && attempt < MAX_RETRIES) {
+              console.warn(`[MangaFlow] ⚠️ 遇到 RPM 限制 (429), 准备重试...`, error.message);
+              continue;
+            }
+            throw error;
+          }
         }
+        if (!translations) throw lastError;
         const duration = Date.now() - startTime;
         console.log(`[MangaFlow] ✅ 翻译完成，耗时 ${duration}ms`);
         return texts.map((text, i) => ({
@@ -2386,7 +2872,7 @@
           engine
         }));
       } catch (error) {
-        console.error("[MangaFlow] ❌ 翻译失败:", error);
+        console.error("[MangaFlow] ❌ 翻译失败 (重试无效):", error);
         throw error;
       }
     }
@@ -2590,8 +3076,10 @@ ${numberedTexts}`;
     }
   }
   class ImageProcessor {
-    // 处理图片，返回可导出的 Canvas
-    async processImage(img, _blocks) {
+    /**
+     * 处理图片：擦除原文区域并返回干净的 Canvas
+     */
+    async processImage(img, blocks) {
       let canvas = document.createElement("canvas");
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
@@ -2604,7 +3092,7 @@ ${numberedTexts}`;
         isTainted = true;
       }
       if (isTainted) {
-        console.log("[MangaFlow] 跨域图片，使用代理重绘:", img.src);
+        console.log("[MangaFlow] ⚠️ 跨域图片，使用代理重绘", img.src);
         const base64Image = await this.fetchImageViaProxy(img.src);
         const proxyImg = await this.loadImageFromBase64(base64Image);
         canvas = document.createElement("canvas");
@@ -2613,9 +3101,148 @@ ${numberedTexts}`;
         ctx = canvas.getContext("2d");
         ctx.drawImage(proxyImg, 0, 0);
       }
-      return canvas;
+      console.log(`[MangaFlow] 🧹 智能像素擦除 ${blocks.length} 个区域...`);
+      const analysis = [];
+      for (const block of blocks) {
+        const result = this.smartErase(ctx, block, canvas.width, canvas.height);
+        analysis.push(result);
+      }
+      return { canvas, analysis };
     }
-    // 通过 Service Worker 代理获取图片
+    /**
+     * 智能像素擦除
+     */
+    smartErase(ctx, block, canvasWidth, canvasHeight) {
+      const { x0, y0, x1, y1 } = block.bbox;
+      const width = x1 - x0;
+      const height = y1 - y0;
+      const compactText = block.text.replace(/\s+/g, "");
+      const longLine = compactText.length >= 10;
+      const padX = Math.floor(width * (longLine ? 0.35 : 0.25));
+      const padY = Math.floor(height * 0.2);
+      const drawX = Math.max(0, Math.floor(x0 - padX));
+      const drawY = Math.max(0, Math.floor(y0 - padY));
+      const drawW = Math.min(canvasWidth - drawX, Math.floor(width + padX * 2));
+      const drawH = Math.min(canvasHeight - drawY, Math.floor(height + padY * 2));
+      const maskBox = {
+        x0: drawX,
+        y0: drawY,
+        x1: drawX + Math.max(0, drawW),
+        y1: drawY + Math.max(0, drawH)
+      };
+      if (drawW <= 0 || drawH <= 0) {
+        return {
+          isComplex: false,
+          isDark: false,
+          avgColor: "#FFFFFF",
+          variance: 0,
+          luminance: 255,
+          maskBox
+        };
+      }
+      const imageData = ctx.getImageData(drawX, drawY, drawW, drawH);
+      const data = imageData.data;
+      const len = data.length;
+      const relX0 = Math.floor(x0 - drawX);
+      const relY0 = Math.floor(y0 - drawY);
+      const relW = Math.floor(width);
+      const relH = Math.floor(height);
+      const safeMargin = 2;
+      const sampleBox = {
+        x: Math.max(0, relX0 - safeMargin),
+        y: Math.max(0, relY0 - safeMargin),
+        w: Math.min(drawW, relW + safeMargin * 2),
+        h: Math.min(drawH, relH + safeMargin * 2)
+      };
+      let { bgR, bgG, bgB, variance } = this.sampleEdgeColor(data, drawW, sampleBox);
+      const luminance = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
+      const isDark = luminance < 128;
+      const isWhiteIsh = luminance > 200;
+      const varianceThreshold = isWhiteIsh ? 6e3 : 2500;
+      const isComplex = variance > varianceThreshold;
+      if (isComplex) {
+        console.log(`[MangaFlow] ⚠️ 背景太复杂 (Var:${Math.round(variance)}, Lum:${Math.round(luminance)}), 跳过擦除`);
+        return { isComplex: true, isDark, avgColor: `rgb(${bgR},${bgG},${bgB})`, variance, luminance, maskBox };
+      }
+      const threshold = isWhiteIsh ? 45 : 30;
+      const pixelsToErase = new Uint8Array(drawW * drawH);
+      for (let i = 0; i < len; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const dist = Math.sqrt(
+          Math.pow(r - bgR, 2) + Math.pow(g - bgG, 2) + Math.pow(b - bgB, 2)
+        );
+        if (dist > threshold) {
+          pixelsToErase[i / 4] = 1;
+        }
+      }
+      const expandedMask = new Uint8Array(drawW * drawH);
+      for (let y = 1; y < drawH - 1; y++) {
+        for (let x = 1; x < drawW - 1; x++) {
+          const idx = y * drawW + x;
+          if (pixelsToErase[idx]) {
+            expandedMask[idx] = 1;
+            expandedMask[idx - 1] = 1;
+            expandedMask[idx + 1] = 1;
+            expandedMask[idx - drawW] = 1;
+            expandedMask[idx + drawW] = 1;
+          }
+        }
+      }
+      for (let i = 0; i < len / 4; i++) {
+        if (expandedMask[i]) {
+          const idx = i * 4;
+          data[idx] = bgR;
+          data[idx + 1] = bgG;
+          data[idx + 2] = bgB;
+        }
+      }
+      ctx.putImageData(imageData, drawX, drawY);
+      return { isComplex, isDark, avgColor: `rgb(${bgR},${bgG},${bgB})`, variance, luminance, maskBox };
+    }
+    /**
+     * 在指定的局部区域采样边缘
+     */
+    sampleEdgeColor(data, totalWidth, box) {
+      let rSum = 0, gSum = 0, bSum = 0;
+      let count = 0;
+      const samples = [];
+      const step = 2;
+      const addSample = (x, y) => {
+        const idx = (y * totalWidth + x) * 4;
+        if (idx < 0 || idx >= data.length) return;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        rSum += r;
+        gSum += g;
+        bSum += b;
+        samples.push({ r, g, b });
+        count++;
+      };
+      for (let x = box.x; x < box.x + box.w; x += step) {
+        addSample(x, box.y);
+        addSample(x, box.y + box.h - 1);
+      }
+      for (let y = box.y; y < box.y + box.h; y += step) {
+        addSample(box.x, y);
+        addSample(box.x + box.w - 1, y);
+      }
+      if (count === 0) return { bgR: 255, bgG: 255, bgB: 255, variance: 0 };
+      const avgR = Math.round(rSum / count);
+      const avgG = Math.round(gSum / count);
+      const avgB = Math.round(bSum / count);
+      let varSum = 0;
+      for (const s of samples) {
+        const dist = Math.pow(s.r - avgR, 2) + Math.pow(s.g - avgG, 2) + Math.pow(s.b - avgB, 2);
+        varSum += dist;
+      }
+      return { bgR: avgR, bgG: avgG, bgB: avgB, variance: varSum / count };
+    }
+    /**
+     * 通过 Service Worker 代理加载跨域图片
+     */
     async fetchImageViaProxy(imageUrl) {
       return new Promise((resolve, reject) => {
         chrome.runtime.sendMessage(
@@ -2634,59 +3261,157 @@ ${numberedTexts}`;
         );
       });
     }
-    // 从 Base64 加载图片
     loadImageFromBase64(base64) {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("加载代理图片失败"));
+        img.onerror = reject;
         img.src = base64;
       });
     }
   }
   class Renderer {
-    // 渲染译文
-    render(canvas, blocks, translations, options) {
+    /**
+     * 渲染译文到 Canvas
+     */
+    render(canvas, blocks, translations, analysis, options, fontSizeOverrides) {
       const ctx = canvas.getContext("2d");
       blocks.forEach((block, index) => {
         const translation = translations[index];
-        if (!translation) return;
+        if (!translation || translation.startsWith("[翻译失败")) return;
+        const blockStats = analysis[index] || { isComplex: false, isDark: false };
         const { bbox } = block;
-        const width = bbox.x1 - bbox.x0;
-        const height = bbox.y1 - bbox.y0;
-        const fontSize = this.calculateFontSize(translation, width, height);
-        ctx.font = `bold ${fontSize}px ${options.fontFamily}, sans-serif`;
+        const renderBox = this.getRenderBox(canvas, bbox, blockStats, translation);
+        const width = renderBox.x1 - renderBox.x0;
+        const height = renderBox.y1 - renderBox.y0;
+        let mainColor = "#000000";
+        let strokeColor = "#FFFFFF";
+        if (blockStats.isDark) {
+          mainColor = "#FFFFFF";
+          strokeColor = "#000000";
+        } else {
+          if (options.fontColor && options.fontColor !== "#000000") {
+            mainColor = options.fontColor;
+          }
+        }
+        const fontFamily = options.fontFamily || "Arial, sans-serif";
+        const normalizedText = translation.replace(/\s*\n\s*/g, " ");
+        const overrideSize = fontSizeOverrides == null ? void 0 : fontSizeOverrides[index];
+        const hasOverride = typeof overrideSize === "number" && overrideSize > 0;
+        const singleLine = hasOverride ? true : this.shouldForceSingleLine(normalizedText);
+        const fontSize = hasOverride ? overrideSize : this.calculateBestFitFontSize(ctx, normalizedText, width, height, fontFamily, singleLine);
+        ctx.font = `bold ${fontSize}px ${fontFamily}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        const lines = this.wrapText(ctx, translation, width - 8);
-        const lineHeight = fontSize * 1.2;
+        if (blockStats.isComplex && !this.shouldSkipMask(normalizedText)) {
+          const baseBox = blockStats.maskBox ?? bbox;
+          const baseW = Math.max(1, baseBox.x1 - baseBox.x0);
+          const baseH = Math.max(1, baseBox.y1 - baseBox.y0);
+          const textWidth = ctx.measureText(normalizedText).width;
+          const padX = Math.max(6, fontSize * 0.6);
+          const targetW = Math.max(baseW, textWidth + padX * 2);
+          const targetH = Math.max(baseH, fontSize * 1.3);
+          const centerX2 = (bbox.x0 + bbox.x1) / 2;
+          const centerY = (bbox.y0 + bbox.y1) / 2;
+          const x0 = Math.max(0, centerX2 - targetW / 2);
+          const y0 = Math.max(0, centerY - targetH / 2);
+          const x1 = Math.min(canvas.width, centerX2 + targetW / 2);
+          const y1 = Math.min(canvas.height, centerY + targetH / 2);
+          const alpha = blockStats.isDark ? 0.26 : 0.16;
+          const baseColor = blockStats.avgColor || (blockStats.isDark ? "rgb(0,0,0)" : "rgb(255,255,255)");
+          const rgbaMatch = baseColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+          const fillStyle = rgbaMatch ? `rgba(${rgbaMatch[1]}, ${rgbaMatch[2]}, ${rgbaMatch[3]}, ${alpha})` : blockStats.isDark ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
+          ctx.fillStyle = fillStyle;
+          ctx.fillRect(x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0));
+        }
+        const lines = singleLine ? [normalizedText] : this.wrapText(ctx, normalizedText, width);
+        const lineHeight = fontSize * (singleLine ? 1.05 : 1.15);
         const totalHeight = lines.length * lineHeight;
-        const startY = bbox.y0 + (height - totalHeight) / 2 + lineHeight / 2;
-        const centerX = bbox.x0 + width / 2;
+        const startY = renderBox.y0 + (height - totalHeight) / 2 + lineHeight / 2;
+        const centerX = renderBox.x0 + width / 2;
         lines.forEach((line, lineIndex) => {
           const y = startY + lineIndex * lineHeight;
-          ctx.strokeStyle = "#FFFFFF";
-          ctx.lineWidth = Math.max(3, fontSize * 0.15);
+          let strokeWidth = Math.max(3, fontSize * 0.15);
+          if (blockStats.isComplex) {
+            strokeWidth = Math.max(4, fontSize * 0.25);
+          }
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = strokeWidth;
           ctx.lineJoin = "round";
           ctx.lineCap = "round";
           ctx.strokeText(line, centerX, y);
-          ctx.fillStyle = options.fontColor;
+          ctx.fillStyle = mainColor;
           ctx.fillText(line, centerX, y);
         });
       });
+      console.log(`[MangaFlow] ✅ 渲染完成 (v2 Smart Fit)，共 ${blocks.length} 个文本块`);
     }
-    // 计算合适的字体大小（填满原文区域）
-    calculateFontSize(text, maxWidth, maxHeight) {
-      const charsPerLine = Math.max(1, Math.floor(maxWidth / 16));
-      const estimatedLines = Math.ceil(text.length / charsPerLine);
-      const lineHeight = 1.2;
-      let fontSize = maxHeight / (estimatedLines * lineHeight);
-      const maxFontByWidth = maxWidth / Math.min(text.length, charsPerLine) * 1.5;
-      fontSize = Math.min(fontSize, maxFontByWidth);
-      fontSize = Math.max(12, Math.min(fontSize, 48));
-      return Math.round(fontSize);
+    getRenderBox(canvas, bbox, blockStats, text) {
+      let x0 = bbox.x0;
+      let y0 = bbox.y0;
+      let x1 = bbox.x1;
+      let y1 = bbox.y1;
+      const isShort = this.shouldForceSingleLine(text);
+      if (isShort) {
+        const width = x1 - x0;
+        const height = y1 - y0;
+        const targetW = Math.max(width, height * 2.6);
+        const extraW = Math.max(0, (targetW - width) / 2);
+        const extraH = Math.max(0, height * 0.2);
+        x0 -= extraW;
+        x1 += extraW;
+        y0 -= extraH;
+        y1 += extraH;
+      }
+      x0 = Math.max(0, x0);
+      y0 = Math.max(0, y0);
+      x1 = Math.min(canvas.width, x1);
+      y1 = Math.min(canvas.height, y1);
+      return { x0, y0, x1, y1 };
     }
-    // 文本换行
+    shouldForceSingleLine(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+      const compact = trimmed.replace(/\s+/g, "");
+      const normalized = compact.replace(/[^A-Za-z0-9\u3040-\u30ff\u3400-\u9fff]/g, "");
+      if (!normalized) return false;
+      const hasCjk = /[\u3040-\u30ff\u3400-\u9fff]/.test(normalized);
+      const hasLatin = /[A-Za-z]/.test(normalized);
+      if (normalized.length <= 8) return true;
+      if (hasCjk && normalized.length <= 10) return true;
+      if (hasLatin && normalized.length <= 14) return true;
+      return false;
+    }
+    shouldSkipMask(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return true;
+      if (/^[\W_]+$/.test(trimmed)) return true;
+      if (trimmed.length <= 1) return true;
+      return false;
+    }
+    /**
+     * 计算最佳适应字号 (从大到小尝试)
+     */
+    calculateBestFitFontSize(ctx, text, maxWidth, maxHeight, fontFamily, singleLine = false) {
+      let startSize = Math.min(maxHeight * (singleLine ? 0.85 : 0.8), 64);
+      const minSize = 12;
+      if (text.length > 10) startSize = Math.min(startSize, maxHeight * (singleLine ? 0.8 : 0.7));
+      for (let size = startSize; size >= minSize; size -= 2) {
+        ctx.font = `bold ${size}px ${fontFamily}`;
+        const lines = singleLine ? [text] : this.wrapText(ctx, text, maxWidth);
+        const lineHeightFactor = singleLine ? 1.05 : 1.15;
+        const totalHeight = lines.length * (size * lineHeightFactor);
+        const fitsHeight = totalHeight <= maxHeight * (singleLine ? 1 : 0.95);
+        const fitsWidth = singleLine ? ctx.measureText(text).width <= maxWidth * 0.95 : true;
+        if (fitsHeight && fitsWidth) {
+          return size;
+        }
+      }
+      return minSize;
+    }
+    /**
+     * 文本换行处理
+     */
     wrapText(ctx, text, maxWidth) {
       const lines = [];
       const chars = text.split("");
@@ -5009,35 +5734,76 @@ ${numberedTexts}`;
   }
   class TextFilter {
     constructor() {
+      this.watermarkStrongKeywords = [
+        "NEWTOKI",
+        "NEW TOKI",
+        "NEWTOKI469",
+        "뉴토끼",
+        "웹툰왕국",
+        "웹툰 왕국"
+      ];
+      this.watermarkWeakKeywords = [
+        "웹툰",
+        "만화",
+        "무료",
+        "빠른",
+        "사이트",
+        "제공"
+      ];
+      this.urlPattern = /https?:\/\/|www\.|\.com\b|\.net\b|\.org\b|\.io\b|\.gg\b|\.me\b|\.to\b|\.kr\b|\.jp\b|\.cn\b/i;
       this.onomatopoeiaPatterns = [
-        // 韩文拟声词
-        /^[ㄱ-ㅎㅏ-ㅣ]{1,4}$/,
-        /^(하하|후후|히히|헤헤|크크|ㅋㅋ|ㅎㅎ|쿵|탕|펑|쾅)+$/i,
+        // 韩文拟声词（重复形态）
+        /^([가-힣])\1{1,3}$/,
+        /^([가-힣]{2})\1{1,2}$/,
+        /^([가-힣]{3})\1$/,
+        /^(쿵쿵|두근두근|부릉|쾅쾅|쾅|팍|퍽|퍽퍽)+$/i,
         // 日文拟声词
-        /^[ァ-ヶー]{1,6}$/,
-        /^(ドキドキ|バタバタ|ガタガタ|ザワザワ|シーン|ゴゴゴ|ドドド)+$/,
+        /^[ァ-ヴー]{1,6}$/,
+        /^(ドキドキ|バキバキ|ゴゴゴゴ|ズキズキ|ガタンゴトン|ドン)+$/,
         // 英文拟声词
         /^(haha|hehe|lol|wow|boom|bang|crash|splash)+$/i
       ];
       this.decorativePatterns = [
-        /^[!?！？…。、,，.]+$/,
-        /^[♥♡★☆◆◇○●△▽]+$/,
-        /^[~～]+$/,
+        /^[!?？！…。，、；：]+$/,
+        /^[★☆◆◇■□●○△▽]+$/,
+        /^[~—-]+$/,
         /^\.{2,}$/
       ];
     }
     // 判断是否需要翻译
     shouldTranslate(text, bbox) {
+      return this.classify(text, bbox).keep;
+    }
+    // 过滤分类（用于组内保护策略）
+    classify(text, bbox) {
       const trimmedText = text.trim();
-      if (!trimmedText) return false;
-      if (trimmedText.length === 1) return false;
       const area = (bbox.x1 - bbox.x0) * (bbox.y1 - bbox.y0);
-      if (area < 400) return false;
-      if (/^\d+$/.test(trimmedText)) return false;
-      if (this.isOnomatopoeia(trimmedText)) return false;
-      if (this.isDecorative(trimmedText)) return false;
-      if (/^\s+$/.test(trimmedText)) return false;
-      return true;
+      const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(trimmedText);
+      if (!trimmedText) return { keep: false, reason: "empty", hardDrop: false };
+      if (/^\s+$/.test(trimmedText)) return { keep: false, reason: "blank", hardDrop: false };
+      if (/^\d+$/.test(trimmedText)) return { keep: false, reason: "digits", hardDrop: false };
+      if (this.isWatermark(trimmedText)) return { keep: false, reason: "watermark", hardDrop: true };
+      if (this.isOnomatopoeia(trimmedText)) return { keep: false, reason: "onomatopoeia", hardDrop: true };
+      if (this.isDecorative(trimmedText)) return { keep: false, reason: "decorative", hardDrop: false };
+      if (!isCjk && trimmedText.length <= 1) {
+        return { keep: false, reason: "short", hardDrop: false };
+      }
+      if (!isCjk && area < 300) {
+        return { keep: false, reason: "small", hardDrop: false };
+      }
+      if (isCjk && trimmedText.length <= 2 && area < 120) {
+        return { keep: false, reason: "small", hardDrop: false };
+      }
+      return { keep: true, reason: "ok", hardDrop: false };
+    }
+    // 水印/广告检测
+    isWatermark(text) {
+      if (this.urlPattern.test(text)) return true;
+      const upper = text.toUpperCase();
+      if (this.watermarkStrongKeywords.some((keyword) => upper.includes(keyword.toUpperCase()))) return true;
+      const weakHitCount = this.watermarkWeakKeywords.filter((keyword) => upper.includes(keyword.toUpperCase())).length;
+      const hasDigits = /\d{2,}/.test(text);
+      return weakHitCount >= 2 && hasDigits;
     }
     // 检测是否为拟声词
     isOnomatopoeia(text) {
@@ -5048,54 +5814,244 @@ ${numberedTexts}`;
       return this.decorativePatterns.some((pattern) => pattern.test(text));
     }
   }
-  let toastContainer = null;
-  function ensureContainer() {
-    if (toastContainer && document.body.contains(toastContainer)) {
-      return toastContainer;
+  class TextDetector {
+    async detect(image, options = {}) {
+      const maxSize = options.maxSize ?? 900;
+      const minWidth = options.minWidth ?? 20;
+      const minHeight = options.minHeight ?? 12;
+      const minArea = options.minArea ?? 200;
+      const maxRegions = options.maxRegions ?? 40;
+      const { canvas, scale } = await this.renderToCanvas(image, maxSize);
+      const ctx = canvas.getContext("2d");
+      let imageData;
+      try {
+        imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      } catch {
+        console.warn("[MangaFlow] ROI 检测读取像素失败");
+        return [];
+      }
+      const { width, height, data } = imageData;
+      const gray = new Uint8ClampedArray(width * height);
+      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        gray[p] = 0.299 * r + 0.587 * g + 0.114 * b | 0;
+      }
+      const mag = new Float32Array(width * height);
+      let sum = 0;
+      let sumSq = 0;
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const idx = y * width + x;
+          const g00 = gray[idx - width - 1];
+          const g01 = gray[idx - width];
+          const g02 = gray[idx - width + 1];
+          const g10 = gray[idx - 1];
+          const g12 = gray[idx + 1];
+          const g20 = gray[idx + width - 1];
+          const g21 = gray[idx + width];
+          const g22 = gray[idx + width + 1];
+          const gx = -g00 - 2 * g10 - g20 + g02 + 2 * g12 + g22;
+          const gy = -g00 - 2 * g01 - g02 + g20 + 2 * g21 + g22;
+          const m = Math.abs(gx) + Math.abs(gy);
+          mag[idx] = m;
+          sum += m;
+          sumSq += m * m;
+        }
+      }
+      const count = (width - 2) * (height - 2);
+      const mean = sum / Math.max(1, count);
+      const variance = sumSq / Math.max(1, count) - mean * mean;
+      const std = Math.sqrt(Math.max(0, variance));
+      const threshold = mean + std * 0.6;
+      const edge = new Uint8Array(width * height);
+      for (let i = 0; i < mag.length; i++) {
+        if (mag[i] > threshold) edge[i] = 1;
+      }
+      let dilated = edge;
+      for (let iter = 0; iter < 2; iter++) {
+        const next = new Uint8Array(width * height);
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            const idx = y * width + x;
+            if (dilated[idx]) {
+              next[idx] = 1;
+              next[idx - 1] = 1;
+              next[idx + 1] = 1;
+              next[idx - width] = 1;
+              next[idx + width] = 1;
+            }
+          }
+        }
+        dilated = next;
+      }
+      const visited = new Uint8Array(width * height);
+      const boxes = [];
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const idx = y * width + x;
+          if (!dilated[idx] || visited[idx]) continue;
+          let minX = x, maxX = x, minY = y, maxY = y;
+          const qx = [x];
+          const qy = [y];
+          visited[idx] = 1;
+          while (qx.length) {
+            const cx = qx.pop();
+            const cy = qy.pop();
+            if (cx < minX) minX = cx;
+            if (cx > maxX) maxX = cx;
+            if (cy < minY) minY = cy;
+            if (cy > maxY) maxY = cy;
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const nx = cx + dx;
+                const ny = cy + dy;
+                if (nx <= 0 || ny <= 0 || nx >= width - 1 || ny >= height - 1) continue;
+                const nidx = ny * width + nx;
+                if (dilated[nidx] && !visited[nidx]) {
+                  visited[nidx] = 1;
+                  qx.push(nx);
+                  qy.push(ny);
+                }
+              }
+            }
+          }
+          const bw = maxX - minX + 1;
+          const bh = maxY - minY + 1;
+          const area = bw * bh;
+          if (bw < minWidth || bh < minHeight || area < minArea) continue;
+          boxes.push({ x0: minX, y0: minY, x1: maxX, y1: maxY });
+        }
+      }
+      const merged = this.mergeBoxes(boxes);
+      const sorted = merged.sort((a, b) => {
+        const areaA = (a.x1 - a.x0) * (a.y1 - a.y0);
+        const areaB = (b.x1 - b.x0) * (b.y1 - b.y0);
+        return areaB - areaA;
+      }).slice(0, maxRegions);
+      const scaleBack = scale;
+      const expanded = sorted.map((b) => this.expandBox({
+        x0: Math.round(b.x0 * scaleBack),
+        y0: Math.round(b.y0 * scaleBack),
+        x1: Math.round(b.x1 * scaleBack),
+        y1: Math.round(b.y1 * scaleBack)
+      }, scaleBack));
+      if (options.debug) {
+        this.drawDebugBoxes(image, expanded, options.debugLabel || "ROI");
+      }
+      return expanded;
     }
-    toastContainer = document.createElement("div");
-    toastContainer.id = "manga-flow-toast-container";
-    toastContainer.className = "manga-flow-toast-container";
-    document.body.appendChild(toastContainer);
-    return toastContainer;
-  }
-  function showToast(message, type = "info", duration = 3e3) {
-    const container = ensureContainer();
-    const toast = document.createElement("div");
-    toast.className = `manga-flow-toast manga-flow-toast--${type}`;
-    const icons = {
-      success: "✓",
-      error: "✗",
-      warning: "⚠",
-      info: "ℹ"
-    };
-    toast.innerHTML = `
-    <span class="manga-flow-toast__icon">${icons[type]}</span>
-    <span class="manga-flow-toast__message">${message}</span>
-  `;
-    container.appendChild(toast);
-    requestAnimationFrame(() => {
-      toast.classList.add("manga-flow-toast--visible");
-    });
-    setTimeout(() => {
-      toast.classList.remove("manga-flow-toast--visible");
-      toast.classList.add("manga-flow-toast--hiding");
-      setTimeout(() => {
-        toast.remove();
-      }, 300);
-    }, duration);
+    // 合并相近/重叠的框
+    mergeBoxes(boxes) {
+      const merged = [];
+      for (const box of boxes) {
+        let mergedToExisting = false;
+        for (const m of merged) {
+          if (this.shouldMerge(m, box)) {
+            m.x0 = Math.min(m.x0, box.x0);
+            m.y0 = Math.min(m.y0, box.y0);
+            m.x1 = Math.max(m.x1, box.x1);
+            m.y1 = Math.max(m.y1, box.y1);
+            mergedToExisting = true;
+            break;
+          }
+        }
+        if (!mergedToExisting) merged.push({ ...box });
+      }
+      return merged;
+    }
+    shouldMerge(a, b) {
+      const ax = a.x1 - a.x0;
+      const ay = a.y1 - a.y0;
+      const bx = b.x1 - b.x0;
+      const by = b.y1 - b.y0;
+      const horizGap = Math.max(0, Math.max(a.x0 - b.x1, b.x0 - a.x1));
+      const vertGap = Math.max(0, Math.max(a.y0 - b.y1, b.y0 - a.y1));
+      const maxH = Math.max(ay, by);
+      const maxW = Math.max(ax, bx);
+      return horizGap < maxW * 0.35 && vertGap < maxH * 0.6;
+    }
+    expandBox(box, scale) {
+      const pad = Math.max(4, Math.round(6 * (scale / 1)));
+      return {
+        x0: Math.max(0, box.x0 - pad),
+        y0: Math.max(0, box.y0 - pad),
+        x1: box.x1 + pad,
+        y1: box.y1 + pad
+      };
+    }
+    async renderToCanvas(image, maxSize) {
+      const width = image instanceof HTMLCanvasElement ? image.width : image.naturalWidth;
+      const height = image instanceof HTMLCanvasElement ? image.height : image.naturalHeight;
+      const maxDim = Math.max(width, height);
+      const scale = maxDim > maxSize ? maxDim / maxSize : 1;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(width / scale);
+      canvas.height = Math.round(height / scale);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      try {
+        ctx.getImageData(0, 0, 1, 1);
+        return { canvas, scale };
+      } catch {
+        if (image instanceof HTMLImageElement) {
+          const base64 = await this.fetchImageViaProxy(image.src);
+          const proxyImg = await this.loadImageFromBase64(base64);
+          canvas.width = Math.round(proxyImg.naturalWidth / scale);
+          canvas.height = Math.round(proxyImg.naturalHeight / scale);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(proxyImg, 0, 0, canvas.width, canvas.height);
+        }
+        return { canvas, scale };
+      }
+    }
+    async fetchImageViaProxy(imageUrl) {
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { type: "FETCH_IMAGE", imageUrl },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if ((response == null ? void 0 : response.success) && response.imageData) {
+              resolve(response.imageData);
+            } else {
+              reject(new Error((response == null ? void 0 : response.error) || "获取图片失败"));
+            }
+          }
+        );
+      });
+    }
+    loadImageFromBase64(base64) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = base64;
+      });
+    }
+    drawDebugBoxes(image, boxes, labelPrefix) {
+      DebugOverlayManager.getInstance().setRoiBoxes(image, boxes, labelPrefix);
+    }
+    clearDebugBoxes() {
+      DebugOverlayManager.getInstance().clearRoiBoxes();
+    }
   }
   class TranslationController {
     constructor() {
       this.isPaused = false;
       this.settings = null;
-      this.phase2Mode = true;
       this.ocrEngine = new OCREngine();
       this.translator = new Translator();
       this.imageProcessor = new ImageProcessor();
       this.renderer = new Renderer();
       this.cacheManager = new CacheManager();
       this.textFilter = new TextFilter();
+      this.textDetector = new TextDetector();
+      this.debugOverlay = DebugOverlayManager.getInstance();
     }
     // 批量翻译图片
     async translateImages(images, onProgress) {
@@ -5146,46 +6102,156 @@ ${numberedTexts}`;
       }
       return { success: successCount, failed: failedCount };
     }
-    // 阶段2：测试翻译效果
+    // 翻译单张图片
     async translateSingleImage(img) {
-      var _a, _b, _c, _d, _e, _f, _g;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
       if (!this.settings) {
         await this.loadSettings();
       }
       this.ocrEngine.configure(this.settings || {});
       const sourceLang = ((_a = this.settings) == null ? void 0 : _a.sourceLang) || "ko";
       const targetLang = ((_b = this.settings) == null ? void 0 : _b.targetLang) || "zh";
-      const imgSrc = img.src || img.getAttribute("data-src") || "";
+      const devMode = ((_c = this.settings) == null ? void 0 : _c.devMode) ?? true;
+      const devPhase = devMode ? ((_d = this.settings) == null ? void 0 : _d.devPhase) || "full" : "full";
+      const showOcrBoxes = devMode ? ((_e = this.settings) == null ? void 0 : _e.showOcrBoxes) ?? true : false;
+      const showRoiBoxes = devMode ? ((_f = this.settings) == null ? void 0 : _f.showRoiBoxes) ?? true : false;
+      const showMaskBoxes = devMode ? ((_g = this.settings) == null ? void 0 : _g.showMaskBoxes) ?? false : false;
+      this.debugOverlay.setEnabled(devMode);
+      this.debugOverlay.setShowFlags({
+        ocr: showOcrBoxes,
+        roi: showRoiBoxes,
+        mask: showMaskBoxes
+      });
+      this.ocrEngine.setDebugMode(devMode);
+      const originalSrc = this.getOriginalSrc(img);
+      if (img.dataset.mfTranslated === "1") {
+        console.log(`[MangaFlow] 已翻译，跳过: ${originalSrc.substring(originalSrc.lastIndexOf("/") + 1)}`);
+        return;
+      }
+      img.dataset.mfOriginalSrc = originalSrc;
+      const imgSrc = originalSrc;
       const imgName = imgSrc.substring(imgSrc.lastIndexOf("/") + 1);
       console.log(`[MangaFlow] 🔄 开始处理: ${imgName}`);
       console.log(`[MangaFlow] 📍 语言: ${sourceLang} → ${targetLang}`);
+      const roiStartTime = Date.now();
+      const roiRegions = await this.textDetector.detect(img, {
+        debug: devMode,
+        debugLabel: `${imgName}-ROI`
+      });
+      const roiDuration = Date.now() - roiStartTime;
+      const imgW = img.naturalWidth || img.width;
+      const imgH = img.naturalHeight || img.height;
+      const imgArea = Math.max(1, imgW * imgH);
+      const roiArea = roiRegions.reduce((sum, r) => sum + Math.max(0, (r.x1 - r.x0) * (r.y1 - r.y0)), 0);
+      const roiCoverage = roiArea / imgArea;
+      console.log(`[MangaFlow] ✂️ ${imgName} ROI 检测完成 (${roiDuration}ms)，候选区域: ${roiRegions.length}，覆盖率 ${(roiCoverage * 100).toFixed(1)}%`);
+      if (showOcrBoxes && roiRegions.length) {
+        console.group(`[MangaFlow] 🟧 ${imgName} ROI 区域列表`);
+        roiRegions.forEach((r, i) => {
+          console.log(`  [${i + 1}] bbox: ${r.x0},${r.y0},${r.x1},${r.y1}`);
+        });
+        console.groupEnd();
+      }
+      const minRoiCoverage = 0.02;
+      const useRoi = roiRegions.length > 0 && roiCoverage >= minRoiCoverage;
+      if (!useRoi && roiRegions.length > 0) {
+        console.log(`[MangaFlow] ⚠️ ROI 覆盖过低，回退全图 OCR（覆盖率 ${(roiCoverage * 100).toFixed(1)}%）`);
+      }
+      if (devMode && devPhase === "roi") {
+        console.log("[MangaFlow] 🛑 阶段 A：仅 ROI 检测，跳过 OCR/翻译/渲染");
+        return;
+      }
       const ocrStartTime = Date.now();
-      const ocrResult = await this.ocrEngine.recognize(img, sourceLang);
+      let ocrResult = null;
+      const ocrEngine = ((_h = this.settings) == null ? void 0 : _h.ocrEngine) || "local";
+      const allowOcrCache = !(devMode && (devPhase === "roi" || devPhase === "ocr"));
+      const cachedOcr = allowOcrCache ? await this.cacheManager.getOCR(imgSrc, ocrEngine) : null;
+      if (cachedOcr) {
+        console.log(`[MangaFlow] 📦 OCR 缓存命中 (${ocrEngine})`);
+        ocrResult = cachedOcr;
+      } else {
+        const usedRegions = useRoi;
+        if (useRoi) {
+          ocrResult = await this.ocrEngine.recognizeRegions(
+            img,
+            roiRegions,
+            sourceLang,
+            devMode,
+            imgName
+          );
+        } else {
+          ocrResult = await this.ocrEngine.recognize(img, sourceLang, devMode, imgName);
+        }
+        await this.cacheManager.setOCR(imgSrc, ocrEngine, ocrResult);
+        if (usedRegions && ((_i = ocrResult == null ? void 0 : ocrResult.blocks) == null ? void 0 : _i.length)) {
+          this.ocrEngine.logBlocks(ocrResult.blocks, `${imgName}: OCR 识别结果`);
+        }
+      }
+      if (cachedOcr && ((_j = ocrResult == null ? void 0 : ocrResult.blocks) == null ? void 0 : _j.length)) {
+        this.ocrEngine.logBlocks(ocrResult.blocks, `${imgName}: OCR 缓存结果`);
+        this.ocrEngine.drawDebugBoxesFor(img, ocrResult.blocks, devMode);
+      }
       const ocrDuration = Date.now() - ocrStartTime;
-      if (!ocrResult.blocks.length) {
+      if (!ocrResult || !ocrResult.blocks.length) {
         console.log(`[MangaFlow] ⚠️ ${imgName}: 未检测到有效文字`);
         return;
       }
       console.log(`[MangaFlow] ✅ ${imgName}: OCR 完成 (${ocrDuration}ms)，共 ${ocrResult.blocks.length} 个文本块`);
-      const filteredBlocks = ocrResult.blocks.filter(
-        (block) => this.textFilter.shouldTranslate(block.text, block.bbox)
+      if (devMode && devPhase === "ocr") {
+        console.log("[MangaFlow] 🛑 阶段 B：OCR 完成，跳过翻译/渲染");
+        return;
+      }
+      const decisions = ocrResult.blocks.map(
+        (block) => this.textFilter.classify(block.text, block.bbox)
       );
+      const keptBlocks = [];
+      const softDropped = [];
+      ocrResult.blocks.forEach((block, index) => {
+        const decision = decisions[index];
+        if (decision.keep) {
+          keptBlocks.push(block);
+          return;
+        }
+        if (decision.hardDrop) return;
+        softDropped.push({ block, reason: decision.reason });
+      });
+      if (keptBlocks.length && softDropped.length) {
+        softDropped.filter((item) => item.reason === "short" || item.reason === "small").forEach((item) => {
+          const nearKept = keptBlocks.some((kept) => this.isNearBlock(kept, item.block));
+          if (nearKept) {
+            keptBlocks.push(item.block);
+          }
+        });
+      }
+      const filteredBlocks = keptBlocks;
       if (!filteredBlocks.length) {
         console.log(`[MangaFlow] ⚠️ ${imgName}: 过滤后无需翻译的文本`);
         return;
       }
-      const engine = ((_c = this.settings) == null ? void 0 : _c.translateEngine) || "google";
-      console.log(`[MangaFlow] 🌐 翻译中... (引擎: ${engine}, 共 ${filteredBlocks.length} 条)`);
+      const groups = this.groupTextBlocks(filteredBlocks);
+      const engine = ((_k = this.settings) == null ? void 0 : _k.translateEngine) || "google";
+      console.log(`[MangaFlow] 🌐 翻译中... (引擎: ${engine}, 共 ${groups.length} 条)`);
       const translateStartTime = Date.now();
-      const textsToTranslate = filteredBlocks.map((block) => block.text);
+      const textsToTranslate = groups.map((group) => group.text);
       let translations;
       try {
-        const results = await this.translator.translateBatch(
-          textsToTranslate,
-          sourceLang,
-          targetLang
-        );
-        translations = results.map((r) => r.translated);
+        const cachedTrans = await this.cacheManager.getTranslation(imgSrc, engine);
+        if (cachedTrans && cachedTrans.length === textsToTranslate.length && cachedTrans.every((t, i) => t.original === textsToTranslate[i])) {
+          console.log(`[MangaFlow] 📦 翻译缓存命中 (${engine})`);
+          translations = cachedTrans.map((t) => t.translated);
+        } else {
+          const results = await this.translator.translateBatch(
+            textsToTranslate,
+            sourceLang,
+            targetLang
+          );
+          translations = results.map((r) => r.translated);
+          await this.cacheManager.setTranslation(
+            imgSrc,
+            engine,
+            results.map((r) => ({ original: r.original, translated: r.translated }))
+          );
+        }
       } catch (error) {
         console.error(`[MangaFlow] ❌ 批量翻译失败:`, error);
         translations = textsToTranslate.map(() => `[翻译失败: ${error.message}]`);
@@ -5194,38 +6260,35 @@ ${numberedTexts}`;
       console.group(`[MangaFlow] 📝 ${imgName} - 翻译结果`);
       console.log(`引擎: ${engine} | OCR: ${ocrDuration}ms | 翻译: ${translateDuration}ms`);
       console.log("─".repeat(50));
-      filteredBlocks.forEach((block, i) => {
-        console.log(`[${i + 1}] 原文: "${block.text}"`);
+      groups.forEach((group, i) => {
+        console.log(`[${i + 1}] 原文: "${group.text}"`);
         console.log(`    译文: "${translations[i]}"`);
         console.log("");
       });
       console.groupEnd();
-      if (this.phase2Mode) {
-        console.log(`[MangaFlow] 🛑 阶段2模式：翻译完成，跳过图像渲染`);
+      if (devMode && devPhase === "translate") {
+        console.log("[MangaFlow] 🛑 阶段 C：翻译完成，跳过渲染");
         return;
       }
       console.log(`[MangaFlow] 🎨 渲染中...`);
-      const canvas = await this.imageProcessor.processImage(img, filteredBlocks);
-      this.renderer.render(canvas, filteredBlocks, translations, {
-        fontSize: ((_d = this.settings) == null ? void 0 : _d.fontSize) || 14,
-        fontColor: ((_e = this.settings) == null ? void 0 : _e.fontColor) || "#000000",
+      const { blocks: renderBlocks, translations: renderTranslations, fontSizes } = this.expandTranslationsToBlocks(groups, translations);
+      const { canvas, analysis } = await this.imageProcessor.processImage(img, renderBlocks);
+      if (devMode) {
+        const maskBoxes = analysis.map((item) => item.maskBox).filter((box) => !!box);
+        if (maskBoxes.length) {
+          this.debugOverlay.setMaskBoxes(img, maskBoxes);
+        }
+      }
+      this.renderer.render(canvas, renderBlocks, renderTranslations, analysis, {
+        fontSize: ((_l = this.settings) == null ? void 0 : _l.fontSize) || 14,
+        fontColor: ((_m = this.settings) == null ? void 0 : _m.fontColor) || "#000000",
         fontFamily: "Arial, sans-serif"
-      });
+      }, fontSizes);
       try {
         const renderedImage = canvas.toDataURL("image/png");
         img.src = renderedImage;
+        img.dataset.mfTranslated = "1";
         console.log(`[MangaFlow] ✅ ${imgName}: 翻译完成！`);
-        const ocrEngine = ((_f = this.settings) == null ? void 0 : _f.ocrEngine) || "local";
-        await this.cacheManager.setOCR(imgSrc, ocrEngine, ocrResult);
-        const translateEngine = ((_g = this.settings) == null ? void 0 : _g.translateEngine) || "google";
-        await this.cacheManager.setTranslation(
-          imgSrc,
-          translateEngine,
-          filteredBlocks.map((block, i) => ({
-            original: block.text,
-            translated: translations[i]
-          }))
-        );
       } catch (error) {
         console.error(`[MangaFlow] ❌ ${imgName}: 导出失败`, error);
         if (error.message.includes("Tainted")) {
@@ -5234,10 +6297,190 @@ ${numberedTexts}`;
         throw error;
       }
     }
+    async clearCache() {
+      await this.cacheManager.clear();
+    }
+    updateSettings(settings) {
+      this.settings = settings;
+    }
     // 加载设置
     async loadSettings() {
-      const result = await chrome.storage.local.get("settings");
-      this.settings = result.settings;
+      var _a;
+      if (!((_a = chrome == null ? void 0 : chrome.runtime) == null ? void 0 : _a.id)) {
+        throw new Error("扩展上下文已失效");
+      }
+      try {
+        const result = await chrome.storage.local.get("settings");
+        this.settings = result.settings;
+      } catch (error) {
+        console.error("[MangaFlow] 读取设置失败:", error);
+        showToast("扩展已更新/重载，请刷新页面", "warning");
+        throw error;
+      }
+    }
+    getOriginalSrc(img) {
+      const dataSrc = img.dataset.mfOriginalSrc || img.getAttribute("data-src") || img.getAttribute("data-original") || img.getAttribute("data-lazy-src") || img.getAttribute("data-lazy") || img.getAttribute("data-srcset");
+      if (dataSrc && !dataSrc.startsWith("data:image")) {
+        return dataSrc;
+      }
+      return img.src || "";
+    }
+    isNearBlock(a, b) {
+      const ax = a.bbox.x1 - a.bbox.x0;
+      const ay = a.bbox.y1 - a.bbox.y0;
+      const bx = b.bbox.x1 - b.bbox.x0;
+      const by = b.bbox.y1 - b.bbox.y0;
+      const vGap = Math.max(0, Math.max(a.bbox.y0 - b.bbox.y1, b.bbox.y0 - a.bbox.y1));
+      const hGap = Math.max(0, Math.max(a.bbox.x0 - b.bbox.x1, b.bbox.x0 - a.bbox.x1));
+      const maxH = Math.max(ay, by);
+      const maxW = Math.max(ax, bx);
+      return vGap < maxH * 0.6 && hGap < maxW * 0.5;
+    }
+    expandTranslationsToBlocks(groups, translations) {
+      const blocks = [];
+      const texts = [];
+      const fontSizes = [];
+      const ctx = document.createElement("canvas").getContext("2d");
+      const fontFamily = "Arial, sans-serif";
+      groups.forEach((group, index) => {
+        const groupBlocks = [...group.blocks].sort((a, b) => {
+          if (a.bbox.y0 === b.bbox.y0) return a.bbox.x0 - b.bbox.x0;
+          return a.bbox.y0 - b.bbox.y0;
+        });
+        const translation = translations[index] || "";
+        const lines = this.splitTranslationIntoLines(translation, groupBlocks, ctx, fontFamily);
+        const fontSize = this.calculateGroupFontSize(groupBlocks, lines, ctx, fontFamily);
+        groupBlocks.forEach((block, lineIndex) => {
+          blocks.push(block);
+          texts.push(lines[lineIndex] ?? "");
+          fontSizes.push(fontSize);
+        });
+      });
+      return { blocks, translations: texts, fontSizes };
+    }
+    calculateGroupFontSize(blocks, lines, ctx, fontFamily) {
+      const heights = blocks.map((b) => b.bbox.y1 - b.bbox.y0);
+      const avgHeight = heights.reduce((sum, h) => sum + h, 0) / Math.max(1, heights.length);
+      let size = Math.max(12, Math.min(avgHeight * 0.8, 48));
+      ctx.font = `bold ${Math.round(size)}px ${fontFamily}`;
+      let minScale = 1;
+      blocks.forEach((block, index) => {
+        const line = (lines[index] ?? "").replace(/\s+/g, " ").trim();
+        if (!line) return;
+        const textWidth = ctx.measureText(line).width;
+        const blockWidth = Math.max(1, block.bbox.x1 - block.bbox.x0);
+        if (textWidth > blockWidth * 0.95) {
+          minScale = Math.min(minScale, blockWidth * 0.95 / textWidth);
+        }
+      });
+      if (minScale < 1) {
+        size = Math.max(12, Math.floor(size * minScale));
+      }
+      return size;
+    }
+    splitTranslationIntoLines(text, blocks, ctx, fontFamily) {
+      const targetCount = Math.max(1, blocks.length);
+      const trimmed = text.trim();
+      if (!trimmed) return new Array(targetCount).fill("");
+      let lines = trimmed.split(/\n+/).map((t) => t.trim()).filter(Boolean);
+      if (lines.length <= 1) {
+        const punctuated = this.splitByPunctuation(trimmed);
+        if (punctuated.length > 1) {
+          lines = punctuated;
+        }
+      }
+      if (lines.length <= 1) {
+        const groupBox = blocks.reduce(
+          (acc, b) => ({
+            x0: Math.min(acc.x0, b.bbox.x0),
+            y0: Math.min(acc.y0, b.bbox.y0),
+            x1: Math.max(acc.x1, b.bbox.x1),
+            y1: Math.max(acc.y1, b.bbox.y1)
+          }),
+          { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
+        );
+        const avgHeight = blocks.reduce((sum, b) => sum + (b.bbox.y1 - b.bbox.y0), 0) / blocks.length;
+        const fontSize = Math.max(12, Math.min(avgHeight * 0.8, 48));
+        ctx.font = `bold ${Math.round(fontSize)}px ${fontFamily}`;
+        lines = this.wrapText(ctx, trimmed, Math.max(1, groupBox.x1 - groupBox.x0));
+      }
+      return this.balanceLines(lines, targetCount);
+    }
+    splitByPunctuation(text) {
+      const parts = [];
+      let current = "";
+      const punctuation = "。！？!?.,，；;：:";
+      for (const ch of text) {
+        current += ch;
+        if (punctuation.includes(ch)) {
+          const value = current.trim();
+          if (value) parts.push(value);
+          current = "";
+        }
+      }
+      const tail = current.trim();
+      if (tail) parts.push(tail);
+      return parts;
+    }
+    balanceLines(lines, targetCount) {
+      let result = lines.map((line) => line.trim()).filter(Boolean);
+      if (result.length === 0) result = [""];
+      while (result.length > targetCount) {
+        const tail = result.pop();
+        result[result.length - 1] = `${result[result.length - 1]} ${tail}`.trim();
+      }
+      let guard = 0;
+      while (result.length < targetCount && guard < 20) {
+        guard += 1;
+        let longestIndex = 0;
+        for (let i = 1; i < result.length; i++) {
+          if (result[i].length > result[longestIndex].length) {
+            longestIndex = i;
+          }
+        }
+        const [a, b] = this.splitLineInHalf(result[longestIndex]);
+        result.splice(longestIndex, 1, a, b);
+        if (!b) break;
+      }
+      while (result.length < targetCount) {
+        result.push("");
+      }
+      return result;
+    }
+    splitLineInHalf(line) {
+      const trimmed = line.trim();
+      if (!trimmed) return ["", ""];
+      const mid = Math.floor(trimmed.length / 2);
+      const leftSpace = trimmed.lastIndexOf(" ", mid);
+      const rightSpace = trimmed.indexOf(" ", mid + 1);
+      let cut = mid;
+      if (leftSpace > 0) cut = leftSpace;
+      else if (rightSpace > 0) cut = rightSpace;
+      const first = trimmed.slice(0, cut).trim();
+      const second = trimmed.slice(cut).trim();
+      if (!first || !second) {
+        return [trimmed, ""];
+      }
+      return [first, second];
+    }
+    wrapText(ctx, text, maxWidth) {
+      const lines = [];
+      const chars = text.split("");
+      let currentLine = "";
+      for (const char of chars) {
+        const testLine = currentLine + char;
+        const metrics = ctx.measureText(testLine);
+        if (metrics.width > maxWidth && currentLine.length > 0) {
+          lines.push(currentLine);
+          currentLine = char;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+      return lines;
     }
     // 暂停
     pause() {
@@ -5246,6 +6489,57 @@ ${numberedTexts}`;
     // 继续
     resume() {
       this.isPaused = false;
+    }
+    // 文本块聚类（按气泡/段落合并）
+    groupTextBlocks(blocks) {
+      if (blocks.length <= 1) {
+        return blocks.map((block) => ({
+          bbox: block.bbox,
+          blocks: [block],
+          text: block.text,
+          confidence: block.confidence
+        }));
+      }
+      const sorted = [...blocks].sort((a, b) => a.bbox.y0 - b.bbox.y0);
+      const groups = [];
+      const isClose = (g, b) => {
+        const gb = g.bbox;
+        const bh = b.bbox.y1 - b.bbox.y0;
+        const gh = gb.y1 - gb.y0;
+        const vGap = Math.max(0, Math.max(gb.y0 - b.bbox.y1, b.bbox.y0 - gb.y1));
+        const hGap = Math.max(0, Math.max(gb.x0 - b.bbox.x1, b.bbox.x0 - gb.x1));
+        const maxH = Math.max(gh, bh);
+        const maxW = Math.max(gb.x1 - gb.x0, b.bbox.x1 - b.bbox.x0);
+        return vGap < maxH * 0.6 && hGap < maxW * 0.5;
+      };
+      for (const block of sorted) {
+        let merged = false;
+        for (const g of groups) {
+          if (isClose(g, block)) {
+            g.blocks.push(block);
+            g.bbox = {
+              x0: Math.min(g.bbox.x0, block.bbox.x0),
+              y0: Math.min(g.bbox.y0, block.bbox.y0),
+              x1: Math.max(g.bbox.x1, block.bbox.x1),
+              y1: Math.max(g.bbox.y1, block.bbox.y1)
+            };
+            merged = true;
+            break;
+          }
+        }
+        if (!merged) {
+          groups.push({ bbox: { ...block.bbox }, blocks: [block] });
+        }
+      }
+      return groups.map((g) => {
+        const sortedBlocks = g.blocks.sort((a, b) => {
+          if (a.bbox.y0 === b.bbox.y0) return a.bbox.x0 - b.bbox.x0;
+          return a.bbox.y0 - b.bbox.y0;
+        });
+        const text = sortedBlocks.map((b) => b.text).join("\n");
+        const confidence = sortedBlocks.reduce((sum, b) => sum + b.confidence, 0) / sortedBlocks.length;
+        return { text, bbox: g.bbox, confidence, blocks: sortedBlocks };
+      });
     }
   }
   class MangaFlow {
@@ -5289,12 +6583,23 @@ ${numberedTexts}`;
       });
       this.floatingBall.mount();
       chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        var _a;
         if (message.type === "START_TRANSLATION") {
           this.startTranslation();
           sendResponse({ success: true });
         } else if (message.type === "OPEN_SETTINGS") {
           this.openSettings();
           sendResponse({ success: true });
+        } else if (message.type === "CLEAR_CACHE") {
+          (_a = this.translationController) == null ? void 0 : _a.clearCache().then(() => {
+            this.translatedImages.clear();
+            console.log("[MangaFlow] 缓存已清空（OCR/翻译）");
+            sendResponse({ success: true });
+          }).catch((error) => {
+            console.error("[MangaFlow] 清除缓存失败:", error);
+            sendResponse({ success: false, error: error.message });
+          });
+          return true;
         }
         return true;
       });
@@ -5304,8 +6609,8 @@ ${numberedTexts}`;
     async onNewImageDetected(img) {
       var _a;
       if (!this.isTranslating) return;
-      const src2 = img.src;
-      if (!src2 || this.translatedImages.has(src2)) return;
+      const src2 = this.getOriginalSrc(img);
+      if (!src2 || img.dataset.mfTranslated === "1" || this.translatedImages.has(src2)) return;
       console.log("[MangaFlow] 检测到新图片，自动翻译:", src2.substring(0, 50));
       this.translatedImages.add(src2);
       try {
@@ -5321,13 +6626,13 @@ ${numberedTexts}`;
       this.isTranslating = true;
       (_a = this.floatingBall) == null ? void 0 : _a.setState("translating");
       try {
-        const images = this.imageDetector.getComicImages();
+        const images = this.imageDetector.getComicImages().filter((img) => img.dataset.mfTranslated !== "1");
         console.log(`检测到 ${images.length} 张漫画图片`);
         if (images.length === 0) {
           (_b = this.floatingBall) == null ? void 0 : _b.setState("idle");
           return;
         }
-        images.forEach((img) => this.translatedImages.add(img.src));
+        images.forEach((img) => this.translatedImages.add(this.getOriginalSrc(img)));
         const result = await this.translationController.translateImages(images, (progress) => {
           var _a2;
           (_a2 = this.floatingBall) == null ? void 0 : _a2.updateProgress(progress.current, progress.total);
@@ -5351,13 +6656,23 @@ ${numberedTexts}`;
       (_a = this.translationController) == null ? void 0 : _a.pause();
       (_b = this.floatingBall) == null ? void 0 : _b.setState("paused");
     }
+    getOriginalSrc(img) {
+      const dataSrc = img.dataset.mfOriginalSrc || img.getAttribute("data-src") || img.getAttribute("data-original") || img.getAttribute("data-lazy-src") || img.getAttribute("data-lazy") || img.getAttribute("data-srcset");
+      if (dataSrc && !dataSrc.startsWith("data:image")) {
+        return dataSrc;
+      }
+      return img.src || "";
+    }
     openSettings() {
       var _a;
       (_a = this.settingsPanel) == null ? void 0 : _a.show();
     }
     async saveSettings(settings) {
+      var _a;
       await chrome.storage.local.set({ settings });
       console.log("设置已保存:", settings);
+      DebugOverlayManager.getInstance().applySettings(settings);
+      (_a = this.translationController) == null ? void 0 : _a.updateSettings(settings);
     }
   }
   new MangaFlow();

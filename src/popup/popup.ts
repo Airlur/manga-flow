@@ -143,20 +143,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // 清除缓存按钮（只清除翻译缓存，不影响设置和 API Key）
+    // 清除缓存按钮（清除 OCR + 翻译缓存，不影响设置和 API Key）
     const clearCacheBtn = document.getElementById('clear-cache-btn');
     clearCacheBtn?.addEventListener('click', async () => {
-        if (!confirm('确定要清除所有翻译缓存吗？（不会影响您的设置和 API Key）')) return;
+        if (!confirm('确定要清除所有 OCR/翻译缓存吗？（不会影响您的设置和 API Key）')) return;
 
         try {
-            // 使用 localforage 清除翻译缓存
-            const { default: localforage } = await import('localforage');
-            const store = localforage.createInstance({
-                name: 'manga-flow',
-                storeName: 'translations',
-            });
-            await store.clear();
-            showStatus('✅ 翻译缓存已清除！');
+            showStatus('正在清除缓存...');
+
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab?.id || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:')) {
+                showTip('请先打开漫画页面再清除缓存');
+                return;
+            }
+
+            const response = await chrome.tabs.sendMessage(tab.id, { type: 'CLEAR_CACHE' });
+            if (!response?.success) {
+                throw new Error(response?.error || '清除失败');
+            }
+
+            showStatus('✅ OCR/翻译缓存已清除！');
             setTimeout(() => window.close(), 1500);
         } catch (error) {
             console.error('[MangaFlow] 清除缓存失败:', error);

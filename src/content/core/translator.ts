@@ -67,25 +67,63 @@ export class Translator {
 
         try {
             let translations: string[];
+            let lastError: any;
 
-            switch (engine) {
-                case 'microsoft':
-                    translations = await this.callMicrosoftBatch(texts, sourceLang, targetLang);
+            // 重试逻辑：最多 3 次，指数退避
+            const MAX_RETRIES = 3;
+            const BASE_DELAY = 3000;
+
+            for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        const delay = BASE_DELAY * Math.pow(2, attempt - 1);
+                        console.log(`[MangaFlow] ⏳ 触发重试机制 (第 ${attempt}/${MAX_RETRIES} 次), 等待 ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+
+                    switch (engine) {
+                        case 'microsoft':
+                            translations = await this.callMicrosoftBatch(texts, sourceLang, targetLang);
+                            break;
+                        case 'google':
+                            translations = await this.callGoogleBatch(texts, sourceLang, targetLang);
+                            break;
+                        case 'deeplx':
+                            translations = await this.callDeepLXBatch(texts, sourceLang, targetLang);
+                            break;
+                        case 'deepl':
+                            translations = await this.callDeepLBatch(texts, sourceLang, targetLang);
+                            break;
+                        case 'openai':
+                        default:
+                            translations = await this.callOpenAIBatch(texts, sourceLang, targetLang);
+                            break;
+                    }
+
+                    // 成功则跳出循环
                     break;
-                case 'google':
-                    translations = await this.callGoogleBatch(texts, sourceLang, targetLang);
-                    break;
-                case 'deeplx':
-                    translations = await this.callDeepLXBatch(texts, sourceLang, targetLang);
-                    break;
-                case 'deepl':
-                    translations = await this.callDeepLBatch(texts, sourceLang, targetLang);
-                    break;
-                case 'openai':
-                default:
-                    translations = await this.callOpenAIBatch(texts, sourceLang, targetLang);
-                    break;
+
+                } catch (error: any) {
+                    lastError = error;
+                    // 检查是否是 429 或 Rate Limit 相关错误
+                    const isRateLimit = error.message?.includes('429') ||
+                        error.message?.toLowerCase().includes('rate limit') ||
+                        error.message?.toLowerCase().includes('quota') ||
+                        error.message?.toLowerCase().includes('too many requests');
+
+                    if (isRateLimit && attempt < MAX_RETRIES) {
+                        console.warn(`[MangaFlow] ⚠️ 遇到 RPM 限制 (429), 准备重试...`, error.message);
+                        continue;
+                    }
+
+                    // 如果不是限流错误，或者重试次数用尽，则抛出
+                    throw error;
+                }
             }
+
+            // 如果循环结束后 translations 仍为空 (理论上不可能，除非全失败并被吞了)
+            // @ts-ignore
+            if (!translations) throw lastError;
 
             const duration = Date.now() - startTime;
             console.log(`[MangaFlow] ✅ 翻译完成，耗时 ${duration}ms`);
@@ -96,7 +134,7 @@ export class Translator {
                 engine,
             }));
         } catch (error) {
-            console.error('[MangaFlow] ❌ 翻译失败:', error);
+            console.error('[MangaFlow] ❌ 翻译失败 (重试无效):', error);
             throw error;
         }
     }

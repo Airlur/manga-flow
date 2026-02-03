@@ -5,6 +5,8 @@ import { FloatingBall } from './ui/floating-ball';
 import { SettingsPanel } from './ui/settings-panel';
 import { ImageDetector } from './core/image-detector';
 import { TranslationController } from './core/translation-controller';
+import { DebugOverlayManager } from './core/debug-overlay';
+import type { Settings } from '../types';
 
 class MangaFlow {
     private floatingBall: FloatingBall | null = null;
@@ -68,6 +70,18 @@ class MangaFlow {
             } else if (message.type === 'OPEN_SETTINGS') {
                 this.openSettings();
                 sendResponse({ success: true });
+            } else if (message.type === 'CLEAR_CACHE') {
+                this.translationController?.clearCache()
+                    .then(() => {
+                        this.translatedImages.clear();
+                        console.log('[MangaFlow] 缓存已清空（OCR/翻译）');
+                        sendResponse({ success: true });
+                    })
+                    .catch((error) => {
+                        console.error('[MangaFlow] 清除缓存失败:', error);
+                        sendResponse({ success: false, error: (error as Error).message });
+                    });
+                return true;
             }
             return true;
         });
@@ -80,8 +94,8 @@ class MangaFlow {
         // 只有在翻译模式下才自动翻译新图片
         if (!this.isTranslating) return;
 
-        const src = img.src;
-        if (!src || this.translatedImages.has(src)) return;
+        const src = this.getOriginalSrc(img);
+        if (!src || img.dataset.mfTranslated === '1' || this.translatedImages.has(src)) return;
 
         console.log('[MangaFlow] 检测到新图片，自动翻译:', src.substring(0, 50));
         this.translatedImages.add(src);
@@ -102,7 +116,8 @@ class MangaFlow {
 
         try {
             // 检测当前可见的漫画图片
-            const images = this.imageDetector.getComicImages();
+            const images = this.imageDetector.getComicImages()
+                .filter((img) => img.dataset.mfTranslated !== '1');
             console.log(`检测到 ${images.length} 张漫画图片`);
 
             if (images.length === 0) {
@@ -111,7 +126,7 @@ class MangaFlow {
             }
 
             // 记录已处理的图片
-            images.forEach(img => this.translatedImages.add(img.src));
+            images.forEach(img => this.translatedImages.add(this.getOriginalSrc(img)));
 
             // 开始批量翻译
             const result = await this.translationController.translateImages(images, (progress) => {
@@ -139,6 +154,19 @@ class MangaFlow {
         this.floatingBall?.setState('paused');
     }
 
+    private getOriginalSrc(img: HTMLImageElement): string {
+        const dataSrc = img.dataset.mfOriginalSrc
+            || img.getAttribute('data-src')
+            || img.getAttribute('data-original')
+            || img.getAttribute('data-lazy-src')
+            || img.getAttribute('data-lazy')
+            || img.getAttribute('data-srcset');
+        if (dataSrc && !dataSrc.startsWith('data:image')) {
+            return dataSrc;
+        }
+        return img.src || '';
+    }
+
     private openSettings(): void {
         this.settingsPanel?.show();
     }
@@ -146,6 +174,8 @@ class MangaFlow {
     private async saveSettings(settings: unknown): Promise<void> {
         await chrome.storage.local.set({ settings });
         console.log('设置已保存:', settings);
+        DebugOverlayManager.getInstance().applySettings(settings as Settings);
+        this.translationController?.updateSettings(settings as Settings);
     }
 }
 

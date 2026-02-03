@@ -22,6 +22,13 @@ export interface Settings {
     cloudOcrKey: string;
     // 请求延迟（毫秒，用于有 RPM 限制的 API）
     requestDelay?: number;
+
+    // 开发模式（仅调试用）
+    devMode?: boolean;
+    devPhase?: 'roi' | 'ocr' | 'translate' | 'full';
+    showOcrBoxes?: boolean;
+    showRoiBoxes?: boolean;
+    showMaskBoxes?: boolean;
 }
 
 // OCR 结果

@@ -187,7 +187,12 @@ chrome.runtime.onInstalled.addListener((details) => {
         fontSize: 14,
         fontColor: "#000000",
         ocrEngine: "local",
-        cloudOcrKey: ""
+        cloudOcrKey: "",
+        devMode: true,
+        devPhase: "roi",
+        showOcrBoxes: true,
+        showRoiBoxes: true,
+        showMaskBoxes: false
       }
     });
   }
