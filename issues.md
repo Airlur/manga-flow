@@ -1,8 +1,8 @@
 ﻿# Issues 清单（MangaFlow）
 
 > 记录已发现的问题、原因与建议方案。处理完成请勾选 [x]。
-> 复检日期：2026-01-29（基于当前代码与实现逻辑重新核对）
-> 说明：云端 OCR 暂缓，本清单以“本地 OCR 跑通”优先。
+> 复检日期：2026-02-03（基于当前代码与实现逻辑重新核对）
+> 说明：当前以云端 OCR 为主，本清单优先覆盖“云端 OCR + 裁剪 + 渲染”相关问题。
 
 ## 主要问题（必须优先处理）
 
@@ -11,10 +11,9 @@
   - 备注：当前阶段2模式未渲染图像，但渲染恢复后该问题应已解决。
   - 影响文件：`src/content/core/image-processor.ts`。
 
-- [ ] P1 目标语言设置不生效
+- [x] P1 目标语言设置不生效
   - 现象：设置面板/Popup 改目标语言后，翻译仍固定为 `zh`。
-  - 根因：`TranslationController.translateSingleImage()` 直接传 `'zh'`。
-  - 建议方案：使用 `settings.targetLang`，与 UI 保持一致。
+  - 解决：已改为使用 `settings.targetLang`。
   - 影响文件：`src/content/core/translation-controller.ts`。
 
 - [ ] P1 构建产物路径不一致，可能导致打包后失效
@@ -35,22 +34,48 @@
   - 建议方案：调整 ROI 合并策略（气泡/文本块级）；必要时临时关闭 ROI。
   - 影响文件：`src/content/core/text-detector.ts`。
 
-- [ ] P1 OCR 文本日志缺失
+- [x] P1 OCR 文本日志缺失
   - 现象：控制台只输出 OCR 完成数量，无法核对识别文本是否正确。
-  - 建议方案：输出每个文本块的原文、bbox、置信度（即便缓存命中）。
+  - 解决：缓存命中与否均输出文本块日志。
   - 影响文件：`src/content/core/translation-controller.ts`, `src/content/core/ocr-engine.ts`。
 
-- [ ] P1 缓存命中时 OCR 红框不重绘
+- [x] P1 缓存命中时 OCR 红框不重绘
   - 现象：阶段 B 仅显示 ROI 橙框，OCR 红框缺失。
-  - 根因：缓存命中后直接返回结果，未触发绘制。
-  - 建议方案：缓存命中仍调用绘制逻辑，保证 ROI/OCR 对比可视化。
+  - 解决：缓存命中仍触发绘制逻辑。
   - 影响文件：`src/content/core/translation-controller.ts`, `src/content/core/ocr-engine.ts`。
 
-- [ ] P1 清除缓存按钮无效
+- [x] P1 清除缓存按钮无效
   - 现象：Popup 的“清除缓存”后，OCR/翻译仍提示命中。
-  - 根因：使用了错误的 `storeName: translations`，实际为 `ocr-cache` / `translation-cache`。
-  - 建议方案：清除两个 store，或直接调用 `CacheManager.clear()`。
+  - 解决：清除 `ocr-cache` / `translation-cache`。
   - 影响文件：`src/popup/popup.ts`, `src/content/core/cache-manager.ts`。
+
+- [ ] P1 气泡/复杂背景误判
+  - 现象：非白色气泡被判定为复杂背景，走遮罩/描边而非擦除。
+  - 影响：气泡对白不干净、观感不一致。
+  - 建议：引入语义优先分类（气泡/ID/拟声词），气泡优先擦除。
+  - 影响文件：`src/content/core/image-processor.ts`, `src/content/core/renderer.ts`。
+
+- [ ] P1 遮罩宽度不稳定
+  - 现象：遮罩随译文长度扩展，出现过长/过短。
+  - 影响：遮罩溢出或漏盖原文。
+  - 建议：气泡类遮罩跟随气泡框，非气泡才按译文宽度 + 上限。
+  - 影响文件：`src/content/core/renderer.ts`。
+
+- [ ] P1 ID/昵称语义翻译
+  - 现象：短标签被语义翻译（如 ID/昵称）。
+  - 建议：ID/昵称检测 + 保留原文/音译；提示词仅作辅助。
+  - 影响文件：`src/content/core/translation-controller.ts`, `src/content/core/translator.ts`。
+
+- [ ] P1 拟声词/装饰文本误翻译
+  - 现象：拟声词被识别为对白，进入翻译/渲染流程。
+  - 建议：拟声词硬过滤 + 视觉特征规则（位置/大小/描边）。
+  - 影响文件：`src/content/utils/text-filter.ts`。
+
+- [ ] P1 渲染策略混用导致观感不一致
+  - 现象：同一页面出现擦除/半透明遮罩/仅描边混用。
+  - 根因：仅依赖背景复杂度判断，缺少语义类型优先级。
+  - 建议：引入语义优先分类（气泡/ID/拟声词/对白）再决定渲染策略。
+  - 影响文件：`src/content/core/image-processor.ts`, `src/content/core/renderer.ts`。
 
 ## 其他风险与优化建议（可延后）
 
@@ -63,6 +88,12 @@
   - 现象：`MAX_CACHE_SIZE` 定义但未使用；清理只在构造时触发。
   - 建议：定期清理 + 基于大小的淘汰策略（LRU）。
   - 影响文件：`src/content/core/cache-manager.ts`。
+
+- [ ] P2 OCR 置信度无实际意义（Cloud）
+  - 现象：日志中 Cloud OCR 置信度恒为 95%。
+  - 根因：Google Vision `textAnnotations` 未返回置信度，代码中固定写死。
+  - 建议：改用 `fullTextAnnotation` 结构或引入伪置信度。
+  - 影响文件：`src/content/core/ocr-engine.ts`。
 
 - [ ] P2 图片哈希仅基于 URL
   - 风险：同 URL 内容变化会复用旧缓存。
