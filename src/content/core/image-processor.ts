@@ -1,25 +1,34 @@
 ﻿// 漫译 MangaFlow - 图像处理模块
-// 使用像素级替换实现“智能擦除”
+// 组级别背景分析与擦除
 
-import type { TextBlock } from '../../types';
+import type { RenderGroup, BBox } from '../../types';
 
-export interface BlockAnalysis {
-    isComplex: boolean; // 背景复杂（高方差）
-    isDark: boolean;    // 背景偏暗（需要白色文字）
+export interface GroupAnalysis {
+    bbox: BBox;
+    maskBox: BBox;
     avgColor: string;
     variance: number;
     luminance: number;
-    maskBox?: { x0: number; y0: number; x1: number; y1: number };
+    edgeDensity: number;
+    dominantRatio: number;
+    ringVariance: number;
+    bubbleLuminance: number;
+    ringLightRatio: number;
+    isDark: boolean;
+    isComplex: boolean;
+    isBubble: boolean;
+    isLightBubble: boolean;
+    renderMode: 'erase' | 'mask';
 }
 
 export class ImageProcessor {
     /**
-     * 处理图片：擦除原文区域并返回干净的 Canvas
+     * 处理图片：按组擦除背景并返回 Canvas
      */
     async processImage(
         img: HTMLImageElement,
-        blocks: TextBlock[]
-    ): Promise<{ canvas: HTMLCanvasElement; analysis: BlockAnalysis[] }> {
+        groups: RenderGroup[]
+    ): Promise<{ canvas: HTMLCanvasElement; analysis: GroupAnalysis[] }> {
         let canvas = document.createElement('canvas');
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
@@ -48,129 +57,270 @@ export class ImageProcessor {
             ctx.drawImage(proxyImg, 0, 0);
         }
 
-        console.log(`[MangaFlow] 🧹 智能像素擦除 ${blocks.length} 个区域...`);
-        const analysis: BlockAnalysis[] = [];
+        console.log(`[MangaFlow] 🧹 组级擦除 ${groups.length} 个区域...`);
+        const analysis: GroupAnalysis[] = [];
 
-        for (const block of blocks) {
-            const result = this.smartErase(ctx, block, canvas.width, canvas.height);
-            analysis.push(result);
+        for (const group of groups) {
+            const maskBox = this.expandBox(group.bbox, canvas.width, canvas.height);
+            const stats = this.analyzeRegion(ctx, group.bbox);
+            const isBubble = this.isBubbleRegion(stats);
+            const isComplex = this.isComplexRegion(stats);
+            const isShort = this.isShortLabel(group.text || '');
+            const isLightBubble = !isShort && isBubble
+                && stats.edgeDensity <= 0.08
+                && stats.ringVariance <= 4500
+                && stats.dominantRatio >= 0.65
+                && stats.bubbleLuminance >= 210
+                && stats.ringLightRatio >= 0.6;
+
+            const renderMode: GroupAnalysis['renderMode'] = isLightBubble ? 'erase' : 'mask';
+
+            const info: GroupAnalysis = {
+                bbox: group.bbox,
+                maskBox,
+                avgColor: stats.avgColor,
+                variance: stats.variance,
+                luminance: stats.luminance,
+                edgeDensity: stats.edgeDensity,
+                dominantRatio: stats.dominantRatio,
+                ringVariance: stats.ringVariance,
+                bubbleLuminance: stats.bubbleLuminance,
+                ringLightRatio: stats.ringLightRatio,
+                isDark: stats.luminance < 128,
+                isComplex,
+                isBubble,
+                isLightBubble,
+                renderMode,
+            };
+
+            if (renderMode === 'erase') {
+                this.eraseRegion(ctx, maskBox, info);
+            }
+
+            analysis.push(info);
         }
 
         return { canvas, analysis };
     }
 
-    /**
-     * 智能像素擦除
-     */
-    private smartErase(
+    private expandBox(box: BBox, canvasWidth: number, canvasHeight: number): BBox {
+        const width = box.x1 - box.x0;
+        const height = box.y1 - box.y0;
+        const padX = Math.min(
+            Math.max(6, Math.round(height * 0.6)),
+            Math.round(width * 0.08)
+        );
+        const padY = Math.max(4, Math.round(height * 0.25));
+
+        const x0 = Math.max(0, Math.floor(box.x0 - padX));
+        const y0 = Math.max(0, Math.floor(box.y0 - padY));
+        const x1 = Math.min(canvasWidth, Math.ceil(box.x1 + padX));
+        const y1 = Math.min(canvasHeight, Math.ceil(box.y1 + padY));
+
+        return { x0, y0, x1, y1 };
+    }
+
+    private analyzeRegion(
         ctx: CanvasRenderingContext2D,
-        block: TextBlock,
-        canvasWidth: number,
-        canvasHeight: number
-    ): BlockAnalysis {
-        const { x0, y0, x1, y1 } = block.bbox;
-        const width = x1 - x0;
-        const height = y1 - y0;
-
-        // 1. 扩大处理区域（Padding）
-        const compactText = block.text.replace(/\s+/g, '');
-        const longLine = compactText.length >= 10;
-        const padX = Math.floor(width * (longLine ? 0.35 : 0.25));
-        const padY = Math.floor(height * 0.2);
-
-        const drawX = Math.max(0, Math.floor(x0 - padX));
-        const drawY = Math.max(0, Math.floor(y0 - padY));
-        const drawW = Math.min(canvasWidth - drawX, Math.floor(width + padX * 2));
-        const drawH = Math.min(canvasHeight - drawY, Math.floor(height + padY * 2));
-        const maskBox = {
-            x0: drawX,
-            y0: drawY,
-            x1: drawX + Math.max(0, drawW),
-            y1: drawY + Math.max(0, drawH),
-        };
-
-        if (drawW <= 0 || drawH <= 0) {
-            return {
-                isComplex: false,
-                isDark: false,
-                avgColor: '#FFFFFF',
-                variance: 0,
-                luminance: 255,
-                maskBox,
-            };
-        }
-
-        // 2. 获取像素数据
-        const imageData = ctx.getImageData(drawX, drawY, drawW, drawH);
+        box: BBox
+    ): {
+        avgColor: string;
+        variance: number;
+        ringVariance: number;
+        luminance: number;
+        edgeDensity: number;
+        dominantRatio: number;
+        bubbleLuminance: number;
+        ringLightRatio: number;
+    } {
+        const width = Math.max(1, Math.floor(box.x1 - box.x0));
+        const height = Math.max(1, Math.floor(box.y1 - box.y0));
+        const imageData = ctx.getImageData(box.x0, box.y0, width, height);
         const data = imageData.data;
-        const len = data.length;
 
-        // 3. 背景采样：只在原 bbox 附近采样，避免混入边框颜色
-        const relX0 = Math.floor(x0 - drawX);
-        const relY0 = Math.floor(y0 - drawY);
-        const relW = Math.floor(width);
-        const relH = Math.floor(height);
+        const step = Math.max(1, Math.floor(Math.max(width, height) / 180));
+        const hist = new Uint32Array(512);
+        const ringHist = new Uint32Array(512);
+        let sampleCount = 0;
+        let lumSum = 0;
+        let lumSumSq = 0;
+        let rSum = 0;
+        let gSum = 0;
+        let bSum = 0;
+        let edgeCount = 0;
+        let ringCount = 0;
+        let ringLumSum = 0;
+        let ringLumSumSq = 0;
+        let ringRSum = 0;
+        let ringGSum = 0;
+        let ringBSum = 0;
+        let ringEdgeCount = 0;
+        let ringLightSum = 0;
+        let ringLightCount = 0;
+        const ringMargin = Math.max(2, Math.round(Math.min(width, height) * 0.08));
 
-        const safeMargin = 2;
-        const sampleBox = {
-            x: Math.max(0, relX0 - safeMargin),
-            y: Math.max(0, relY0 - safeMargin),
-            w: Math.min(drawW, relW + safeMargin * 2),
-            h: Math.min(drawH, relH + safeMargin * 2)
+        const getLum = (idx: number): number => {
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+            return 0.299 * r + 0.587 * g + 0.114 * b;
         };
 
-        let { bgR, bgG, bgB, variance } = this.sampleEdgeColor(data, drawW, sampleBox);
+        for (let y = 0; y < height; y += step) {
+            for (let x = 0; x < width; x += step) {
+                const idx = (y * width + x) * 4;
+                const r = data[idx];
+                const g = data[idx + 1];
+                const b = data[idx + 2];
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
-        const luminance = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
-        const isDark = luminance < 128;
+                lumSum += lum;
+                lumSumSq += lum * lum;
+                rSum += r;
+                gSum += g;
+                bSum += b;
+                sampleCount++;
 
-        const isWhiteIsh = luminance > 200;
-        const varianceThreshold = isWhiteIsh ? 6000 : 2500;
-        const isComplex = variance > varianceThreshold;
+                const bucket = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
+                hist[bucket]++;
 
-        // 复杂度保护
-        if (isComplex) {
-            console.log(`[MangaFlow] ⚠️ 背景太复杂 (Var:${Math.round(variance)}, Lum:${Math.round(luminance)}), 跳过擦除`);
-            return { isComplex: true, isDark, avgColor: `rgb(${bgR},${bgG},${bgB})`, variance, luminance, maskBox };
+                const isRing = x < ringMargin || y < ringMargin || x >= width - ringMargin || y >= height - ringMargin;
+                if (isRing) {
+                    ringLumSum += lum;
+                    ringLumSumSq += lum * lum;
+                    ringRSum += r;
+                    ringGSum += g;
+                    ringBSum += b;
+                    ringCount++;
+                    ringHist[bucket]++;
+                    if (lum >= 200) {
+                        ringLightSum += lum;
+                        ringLightCount++;
+                    }
+                }
+
+                if (x + step < width && y + step < height) {
+                    const idxRight = (y * width + (x + step)) * 4;
+                    const idxDown = ((y + step) * width + x) * 4;
+                    const lumRight = getLum(idxRight);
+                    const lumDown = getLum(idxDown);
+                    const grad = Math.abs(lum - lumRight) + Math.abs(lum - lumDown);
+                    if (grad > 40) {
+                        edgeCount++;
+                        if (isRing) ringEdgeCount++;
+                    }
+                }
+            }
         }
 
-        // 4. 像素替换（阈值 & 膨胀）
-        const threshold = isWhiteIsh ? 45 : 30;
-        const pixelsToErase = new Uint8Array(drawW * drawH);
+        const avgLum = lumSum / Math.max(1, sampleCount);
+        const variance = lumSumSq / Math.max(1, sampleCount) - avgLum * avgLum;
+        const ringAvgLum = ringLumSum / Math.max(1, ringCount);
+        const ringLightAvg = ringLightCount ? (ringLightSum / ringLightCount) : ringAvgLum;
+        const ringLightRatio = ringLightCount / Math.max(1, ringCount);
+        const ringVariance = ringLumSumSq / Math.max(1, ringCount) - ringAvgLum * ringAvgLum;
+        const avgR = Math.round((ringCount ? ringRSum : rSum) / Math.max(1, ringCount || sampleCount));
+        const avgG = Math.round((ringCount ? ringGSum : gSum) / Math.max(1, ringCount || sampleCount));
+        const avgB = Math.round((ringCount ? ringBSum : bSum) / Math.max(1, ringCount || sampleCount));
 
-        for (let i = 0; i < len; i += 4) {
+        let maxBin = 0;
+        for (const count of hist) {
+            if (count > maxBin) maxBin = count;
+        }
+
+        let ringMaxBin = 0;
+        for (const count of ringHist) {
+            if (count > ringMaxBin) ringMaxBin = count;
+        }
+
+        const dominantRatio = (ringCount ? ringMaxBin : maxBin) / Math.max(1, ringCount || sampleCount);
+        const edgeDensity = (ringCount ? ringEdgeCount : edgeCount) / Math.max(1, ringCount || sampleCount);
+
+        return {
+            avgColor: `rgb(${avgR},${avgG},${avgB})`,
+            variance: Math.max(0, variance),
+            ringVariance: Math.max(0, ringVariance),
+            luminance: avgLum,
+            edgeDensity,
+            dominantRatio,
+            bubbleLuminance: ringLightAvg,
+            ringLightRatio,
+        };
+    }
+
+    private isBubbleRegion(stats: { dominantRatio: number; edgeDensity: number; ringVariance: number }): boolean {
+        if (stats.dominantRatio >= 0.62 && stats.edgeDensity <= 0.1) return true;
+        if (stats.dominantRatio >= 0.56 && stats.edgeDensity <= 0.08 && stats.ringVariance <= 4500) return true;
+        return false;
+    }
+
+    private isComplexRegion(stats: { edgeDensity: number; ringVariance: number }): boolean {
+        return stats.edgeDensity >= 0.14 || stats.ringVariance >= 6500;
+    }
+
+    private isShortLabel(text: string): boolean {
+        const trimmed = text.trim();
+        if (!trimmed) return false;
+        const compact = trimmed.replace(/\s+/g, '');
+        const normalized = compact.replace(/[^A-Za-z0-9\u3040-\u30ff\u3400-\u9fff]/g, '');
+        if (!normalized) return false;
+        const hasCjk = /[\u3040-\u30ff\u3400-\u9fff]/.test(normalized);
+        const hasLatin = /[A-Za-z]/.test(normalized);
+        if (normalized.length <= 8) return true;
+        if (hasCjk && normalized.length <= 10) return true;
+        if (hasLatin && normalized.length <= 14) return true;
+        return false;
+    }
+
+    private eraseRegion(
+        ctx: CanvasRenderingContext2D,
+        box: BBox,
+        info: GroupAnalysis
+    ): void {
+        const width = Math.max(1, Math.floor(box.x1 - box.x0));
+        const height = Math.max(1, Math.floor(box.y1 - box.y0));
+        const imageData = ctx.getImageData(box.x0, box.y0, width, height);
+        const data = imageData.data;
+
+        let { bgR, bgG, bgB } = this.sampleEdgeColor(data, width, { x: 0, y: 0, w: width, h: height });
+        if (info.isLightBubble && info.bubbleLuminance >= 205) {
+            bgR = 255;
+            bgG = 255;
+            bgB = 255;
+        }
+        const threshold = info.isBubble ? 35 : 28;
+        const pixelsToErase = new Uint8Array(width * height);
+
+        for (let i = 0; i < data.length; i += 4) {
             const r = data[i];
             const g = data[i + 1];
             const b = data[i + 2];
-
             const dist = Math.sqrt(
                 Math.pow(r - bgR, 2) +
                 Math.pow(g - bgG, 2) +
                 Math.pow(b - bgB, 2)
             );
-
             if (dist > threshold) {
                 pixelsToErase[i / 4] = 1;
             }
         }
 
-        // 膨胀（扩大覆盖范围）
-        const expandedMask = new Uint8Array(drawW * drawH);
-        for (let y = 1; y < drawH - 1; y++) {
-            for (let x = 1; x < drawW - 1; x++) {
-                const idx = y * drawW + x;
+        // 膨胀
+        const expandedMask = new Uint8Array(width * height);
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const idx = y * width + x;
                 if (pixelsToErase[idx]) {
                     expandedMask[idx] = 1;
                     expandedMask[idx - 1] = 1;
                     expandedMask[idx + 1] = 1;
-                    expandedMask[idx - drawW] = 1;
-                    expandedMask[idx + drawW] = 1;
+                    expandedMask[idx - width] = 1;
+                    expandedMask[idx + width] = 1;
                 }
             }
         }
 
-        // 写回
-        for (let i = 0; i < len / 4; i++) {
+        for (let i = 0; i < data.length / 4; i++) {
             if (expandedMask[i]) {
                 const idx = i * 4;
                 data[idx] = bgR;
@@ -178,59 +328,46 @@ export class ImageProcessor {
                 data[idx + 2] = bgB;
             }
         }
-        ctx.putImageData(imageData, drawX, drawY);
 
-        return { isComplex, isDark, avgColor: `rgb(${bgR},${bgG},${bgB})`, variance, luminance, maskBox };
+        ctx.putImageData(imageData, box.x0, box.y0);
     }
 
     /**
-     * 在指定的局部区域采样边缘
+     * 在指定的局部区域采样边缘颜色
      */
     private sampleEdgeColor(
         data: Uint8ClampedArray,
         totalWidth: number,
         box: { x: number; y: number; w: number; h: number }
-    ): { bgR: number; bgG: number; bgB: number; variance: number } {
+    ): { bgR: number; bgG: number; bgB: number } {
         let rSum = 0, gSum = 0, bSum = 0;
         let count = 0;
-        const samples: { r: number; g: number; b: number }[] = [];
         const step = 2;
 
         const addSample = (x: number, y: number) => {
             const idx = (y * totalWidth + x) * 4;
             if (idx < 0 || idx >= data.length) return;
-            const r = data[idx];
-            const g = data[idx + 1];
-            const b = data[idx + 2];
-            rSum += r; gSum += g; bSum += b;
-            samples.push({ r, g, b });
+            rSum += data[idx];
+            gSum += data[idx + 1];
+            bSum += data[idx + 2];
             count++;
         };
 
-        // Top & Bottom of box
         for (let x = box.x; x < box.x + box.w; x += step) {
             addSample(x, box.y);
             addSample(x, box.y + box.h - 1);
         }
-        // Left & Right of box
         for (let y = box.y; y < box.y + box.h; y += step) {
             addSample(box.x, y);
             addSample(box.x + box.w - 1, y);
         }
 
-        if (count === 0) return { bgR: 255, bgG: 255, bgB: 255, variance: 0 };
-
-        const avgR = Math.round(rSum / count);
-        const avgG = Math.round(gSum / count);
-        const avgB = Math.round(bSum / count);
-
-        let varSum = 0;
-        for (const s of samples) {
-            const dist = Math.pow(s.r - avgR, 2) + Math.pow(s.g - avgG, 2) + Math.pow(s.b - avgB, 2);
-            varSum += dist;
-        }
-
-        return { bgR: avgR, bgG: avgG, bgB: avgB, variance: varSum / count };
+        if (count === 0) return { bgR: 255, bgG: 255, bgB: 255 };
+        return {
+            bgR: Math.round(rSum / count),
+            bgG: Math.round(gSum / count),
+            bgB: Math.round(bSum / count),
+        };
     }
 
     /**

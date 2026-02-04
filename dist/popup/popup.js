@@ -15,7 +15,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       targetLang: "zh",
       translateEngine: "google",
       fontSize: 14,
+      fontScale: 1,
       fontColor: "#000000",
+      maskOpacity: 0.24,
       ocrEngine: "local"
     };
     await chrome.storage.local.set({ settings });

@@ -154,12 +154,16 @@ export class SettingsPanel {
           <section class="manga-flow-settings__section">
             <h3>显示设置</h3>
             <div class="manga-flow-settings__field">
-              <label for="mf-font-size">译文字体大小: <span id="mf-font-size-value">14</span>px</label>
-              <input type="range" id="mf-font-size" min="10" max="24" value="14" />
+              <label for="mf-font-size">译文字体倍率: <span id="mf-font-size-value">100</span>%</label>
+              <input type="range" id="mf-font-size" min="85" max="120" value="100" />
             </div>
             <div class="manga-flow-settings__field">
               <label for="mf-font-color">译文字体颜色</label>
               <input type="color" id="mf-font-color" value="#000000" />
+            </div>
+            <div class="manga-flow-settings__field">
+              <label for="mf-mask-opacity">遮罩透明度: <span id="mf-mask-opacity-value">0.24</span></label>
+              <input type="range" id="mf-mask-opacity" min="0.15" max="0.55" step="0.01" value="0.24" />
             </div>
           </section>
 
@@ -277,6 +281,12 @@ export class SettingsPanel {
     const fontSizeValue = this.element.querySelector('#mf-font-size-value');
     fontSizeInput?.addEventListener('input', () => {
       if (fontSizeValue) fontSizeValue.textContent = fontSizeInput.value;
+    });
+
+    const maskOpacityInput = this.element.querySelector('#mf-mask-opacity') as HTMLInputElement;
+    const maskOpacityValue = this.element.querySelector('#mf-mask-opacity-value');
+    maskOpacityInput?.addEventListener('input', () => {
+      if (maskOpacityValue) maskOpacityValue.textContent = maskOpacityInput.value;
     });
 
     // 开发模式联动
@@ -486,9 +496,15 @@ export class SettingsPanel {
     (this.element.querySelector('#mf-deepl-key') as HTMLInputElement).value = settings.deeplApiKey || '';
     (this.element.querySelector('#mf-ocr-engine') as HTMLSelectElement).value = settings.ocrEngine || 'local';
     (this.element.querySelector('#mf-cloud-ocr-key') as HTMLInputElement).value = settings.cloudOcrKey || '';
-    (this.element.querySelector('#mf-font-size') as HTMLInputElement).value = String(settings.fontSize || 14);
-    (this.element.querySelector('#mf-font-size-value') as HTMLElement).textContent = String(settings.fontSize || 14);
+    const rawScale = settings.fontScale ?? (settings.fontSize ? settings.fontSize / 14 : 1);
+    const fontScale = Math.max(0.85, Math.min(1.2, rawScale));
+    const scalePercent = Math.round(fontScale * 100);
+    (this.element.querySelector('#mf-font-size') as HTMLInputElement).value = String(scalePercent);
+    (this.element.querySelector('#mf-font-size-value') as HTMLElement).textContent = String(scalePercent);
     (this.element.querySelector('#mf-font-color') as HTMLInputElement).value = settings.fontColor || '#000000';
+    const maskOpacity = Math.max(0.15, Math.min(0.55, settings.maskOpacity ?? 0.24));
+    (this.element.querySelector('#mf-mask-opacity') as HTMLInputElement).value = String(maskOpacity);
+    (this.element.querySelector('#mf-mask-opacity-value') as HTMLElement).textContent = String(maskOpacity);
 
     // 显示对应的翻译引擎设置
     this.toggleEngineSettings(settings.translateEngine || 'microsoft');
@@ -552,8 +568,10 @@ export class SettingsPanel {
       deeplApiKey: (this.element.querySelector('#mf-deepl-key') as HTMLInputElement).value,
       ocrEngine: (this.element.querySelector('#mf-ocr-engine') as HTMLSelectElement).value as Settings['ocrEngine'],
       cloudOcrKey: (this.element.querySelector('#mf-cloud-ocr-key') as HTMLInputElement).value,
-      fontSize: parseInt((this.element.querySelector('#mf-font-size') as HTMLInputElement).value),
+      fontSize: Math.round((parseInt((this.element.querySelector('#mf-font-size') as HTMLInputElement).value) / 100) * 14),
+      fontScale: parseInt((this.element.querySelector('#mf-font-size') as HTMLInputElement).value) / 100,
       fontColor: (this.element.querySelector('#mf-font-color') as HTMLInputElement).value,
+      maskOpacity: parseFloat((this.element.querySelector('#mf-mask-opacity') as HTMLInputElement).value),
       devMode: DEV_MODE ? (this.element.querySelector('#mf-dev-mode') as HTMLInputElement | null)?.checked ?? true : undefined,
       devPhase: DEV_MODE ? (this.element.querySelector('#mf-dev-phase') as HTMLSelectElement | null)?.value as Settings['devPhase'] : undefined,
       showOcrBoxes: DEV_MODE ? (this.element.querySelector('#mf-show-ocr-boxes') as HTMLInputElement | null)?.checked ?? true : undefined,

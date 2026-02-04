@@ -331,12 +331,16 @@
           <section class="manga-flow-settings__section">
             <h3>显示设置</h3>
             <div class="manga-flow-settings__field">
-              <label for="mf-font-size">译文字体大小: <span id="mf-font-size-value">14</span>px</label>
-              <input type="range" id="mf-font-size" min="10" max="24" value="14" />
+              <label for="mf-font-size">译文字体倍率: <span id="mf-font-size-value">100</span>%</label>
+              <input type="range" id="mf-font-size" min="85" max="120" value="100" />
             </div>
             <div class="manga-flow-settings__field">
               <label for="mf-font-color">译文字体颜色</label>
               <input type="color" id="mf-font-color" value="#000000" />
+            </div>
+            <div class="manga-flow-settings__field">
+              <label for="mf-mask-opacity">遮罩透明度: <span id="mf-mask-opacity-value">0.24</span></label>
+              <input type="range" id="mf-mask-opacity" min="0.15" max="0.55" step="0.01" value="0.24" />
             </div>
           </section>
 
@@ -430,6 +434,11 @@
       const fontSizeValue = this.element.querySelector("#mf-font-size-value");
       fontSizeInput == null ? void 0 : fontSizeInput.addEventListener("input", () => {
         if (fontSizeValue) fontSizeValue.textContent = fontSizeInput.value;
+      });
+      const maskOpacityInput = this.element.querySelector("#mf-mask-opacity");
+      const maskOpacityValue = this.element.querySelector("#mf-mask-opacity-value");
+      maskOpacityInput == null ? void 0 : maskOpacityInput.addEventListener("input", () => {
+        if (maskOpacityValue) maskOpacityValue.textContent = maskOpacityInput.value;
       });
       const devModeInput = this.element.querySelector("#mf-dev-mode");
       const devPhaseSelect = this.element.querySelector("#mf-dev-phase");
@@ -599,9 +608,15 @@
       this.element.querySelector("#mf-deepl-key").value = settings.deeplApiKey || "";
       this.element.querySelector("#mf-ocr-engine").value = settings.ocrEngine || "local";
       this.element.querySelector("#mf-cloud-ocr-key").value = settings.cloudOcrKey || "";
-      this.element.querySelector("#mf-font-size").value = String(settings.fontSize || 14);
-      this.element.querySelector("#mf-font-size-value").textContent = String(settings.fontSize || 14);
+      const rawScale = settings.fontScale ?? (settings.fontSize ? settings.fontSize / 14 : 1);
+      const fontScale = Math.max(0.85, Math.min(1.2, rawScale));
+      const scalePercent = Math.round(fontScale * 100);
+      this.element.querySelector("#mf-font-size").value = String(scalePercent);
+      this.element.querySelector("#mf-font-size-value").textContent = String(scalePercent);
       this.element.querySelector("#mf-font-color").value = settings.fontColor || "#000000";
+      const maskOpacity = Math.max(0.15, Math.min(0.55, settings.maskOpacity ?? 0.24));
+      this.element.querySelector("#mf-mask-opacity").value = String(maskOpacity);
+      this.element.querySelector("#mf-mask-opacity-value").textContent = String(maskOpacity);
       this.toggleEngineSettings(settings.translateEngine || "microsoft");
       const cloudOcrField = this.element.querySelector(".manga-flow-settings__field--cloud-ocr");
       if (cloudOcrField) {
@@ -653,8 +668,10 @@
         deeplApiKey: this.element.querySelector("#mf-deepl-key").value,
         ocrEngine: this.element.querySelector("#mf-ocr-engine").value,
         cloudOcrKey: this.element.querySelector("#mf-cloud-ocr-key").value,
-        fontSize: parseInt(this.element.querySelector("#mf-font-size").value),
+        fontSize: Math.round(parseInt(this.element.querySelector("#mf-font-size").value) / 100 * 14),
+        fontScale: parseInt(this.element.querySelector("#mf-font-size").value) / 100,
         fontColor: this.element.querySelector("#mf-font-color").value,
+        maskOpacity: parseFloat(this.element.querySelector("#mf-mask-opacity").value),
         devMode: ((_a = this.element.querySelector("#mf-dev-mode")) == null ? void 0 : _a.checked) ?? true,
         devPhase: (_b = this.element.querySelector("#mf-dev-phase")) == null ? void 0 : _b.value,
         showOcrBoxes: ((_c = this.element.querySelector("#mf-show-ocr-boxes")) == null ? void 0 : _c.checked) ?? true,
@@ -3077,9 +3094,9 @@ ${numberedTexts}`;
   }
   class ImageProcessor {
     /**
-     * 处理图片：擦除原文区域并返回干净的 Canvas
+     * 处理图片：按组擦除背景并返回 Canvas
      */
-    async processImage(img, blocks) {
+    async processImage(img, groups) {
       let canvas = document.createElement("canvas");
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
@@ -3101,72 +3118,192 @@ ${numberedTexts}`;
         ctx = canvas.getContext("2d");
         ctx.drawImage(proxyImg, 0, 0);
       }
-      console.log(`[MangaFlow] 🧹 智能像素擦除 ${blocks.length} 个区域...`);
+      console.log(`[MangaFlow] 🧹 组级擦除 ${groups.length} 个区域...`);
       const analysis = [];
-      for (const block of blocks) {
-        const result = this.smartErase(ctx, block, canvas.width, canvas.height);
-        analysis.push(result);
+      for (const group of groups) {
+        const maskBox = this.expandBox(group.bbox, canvas.width, canvas.height);
+        const stats = this.analyzeRegion(ctx, group.bbox);
+        const isBubble = this.isBubbleRegion(stats);
+        const isComplex = this.isComplexRegion(stats);
+        const isShort = this.isShortLabel(group.text || "");
+        const isLightBubble = !isShort && isBubble && stats.edgeDensity <= 0.08 && stats.ringVariance <= 4500 && stats.dominantRatio >= 0.65 && stats.bubbleLuminance >= 210 && stats.ringLightRatio >= 0.6;
+        const renderMode = isLightBubble ? "erase" : "mask";
+        const info = {
+          bbox: group.bbox,
+          maskBox,
+          avgColor: stats.avgColor,
+          variance: stats.variance,
+          luminance: stats.luminance,
+          edgeDensity: stats.edgeDensity,
+          dominantRatio: stats.dominantRatio,
+          ringVariance: stats.ringVariance,
+          bubbleLuminance: stats.bubbleLuminance,
+          ringLightRatio: stats.ringLightRatio,
+          isDark: stats.luminance < 128,
+          isComplex,
+          isBubble,
+          isLightBubble,
+          renderMode
+        };
+        if (renderMode === "erase") {
+          this.eraseRegion(ctx, maskBox, info);
+        }
+        analysis.push(info);
       }
       return { canvas, analysis };
     }
-    /**
-     * 智能像素擦除
-     */
-    smartErase(ctx, block, canvasWidth, canvasHeight) {
-      const { x0, y0, x1, y1 } = block.bbox;
-      const width = x1 - x0;
-      const height = y1 - y0;
-      const compactText = block.text.replace(/\s+/g, "");
-      const longLine = compactText.length >= 10;
-      const padX = Math.floor(width * (longLine ? 0.35 : 0.25));
-      const padY = Math.floor(height * 0.2);
-      const drawX = Math.max(0, Math.floor(x0 - padX));
-      const drawY = Math.max(0, Math.floor(y0 - padY));
-      const drawW = Math.min(canvasWidth - drawX, Math.floor(width + padX * 2));
-      const drawH = Math.min(canvasHeight - drawY, Math.floor(height + padY * 2));
-      const maskBox = {
-        x0: drawX,
-        y0: drawY,
-        x1: drawX + Math.max(0, drawW),
-        y1: drawY + Math.max(0, drawH)
-      };
-      if (drawW <= 0 || drawH <= 0) {
-        return {
-          isComplex: false,
-          isDark: false,
-          avgColor: "#FFFFFF",
-          variance: 0,
-          luminance: 255,
-          maskBox
-        };
-      }
-      const imageData = ctx.getImageData(drawX, drawY, drawW, drawH);
+    expandBox(box, canvasWidth, canvasHeight) {
+      const width = box.x1 - box.x0;
+      const height = box.y1 - box.y0;
+      const padX = Math.min(
+        Math.max(6, Math.round(height * 0.6)),
+        Math.round(width * 0.08)
+      );
+      const padY = Math.max(4, Math.round(height * 0.25));
+      const x0 = Math.max(0, Math.floor(box.x0 - padX));
+      const y0 = Math.max(0, Math.floor(box.y0 - padY));
+      const x1 = Math.min(canvasWidth, Math.ceil(box.x1 + padX));
+      const y1 = Math.min(canvasHeight, Math.ceil(box.y1 + padY));
+      return { x0, y0, x1, y1 };
+    }
+    analyzeRegion(ctx, box) {
+      const width = Math.max(1, Math.floor(box.x1 - box.x0));
+      const height = Math.max(1, Math.floor(box.y1 - box.y0));
+      const imageData = ctx.getImageData(box.x0, box.y0, width, height);
       const data = imageData.data;
-      const len = data.length;
-      const relX0 = Math.floor(x0 - drawX);
-      const relY0 = Math.floor(y0 - drawY);
-      const relW = Math.floor(width);
-      const relH = Math.floor(height);
-      const safeMargin = 2;
-      const sampleBox = {
-        x: Math.max(0, relX0 - safeMargin),
-        y: Math.max(0, relY0 - safeMargin),
-        w: Math.min(drawW, relW + safeMargin * 2),
-        h: Math.min(drawH, relH + safeMargin * 2)
+      const step = Math.max(1, Math.floor(Math.max(width, height) / 180));
+      const hist = new Uint32Array(512);
+      const ringHist = new Uint32Array(512);
+      let sampleCount = 0;
+      let lumSum = 0;
+      let lumSumSq = 0;
+      let rSum = 0;
+      let gSum = 0;
+      let bSum = 0;
+      let edgeCount = 0;
+      let ringCount = 0;
+      let ringLumSum = 0;
+      let ringLumSumSq = 0;
+      let ringRSum = 0;
+      let ringGSum = 0;
+      let ringBSum = 0;
+      let ringEdgeCount = 0;
+      let ringLightSum = 0;
+      let ringLightCount = 0;
+      const ringMargin = Math.max(2, Math.round(Math.min(width, height) * 0.08));
+      const getLum = (idx) => {
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        return 0.299 * r + 0.587 * g + 0.114 * b;
       };
-      let { bgR, bgG, bgB, variance } = this.sampleEdgeColor(data, drawW, sampleBox);
-      const luminance = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
-      const isDark = luminance < 128;
-      const isWhiteIsh = luminance > 200;
-      const varianceThreshold = isWhiteIsh ? 6e3 : 2500;
-      const isComplex = variance > varianceThreshold;
-      if (isComplex) {
-        console.log(`[MangaFlow] ⚠️ 背景太复杂 (Var:${Math.round(variance)}, Lum:${Math.round(luminance)}), 跳过擦除`);
-        return { isComplex: true, isDark, avgColor: `rgb(${bgR},${bgG},${bgB})`, variance, luminance, maskBox };
+      for (let y = 0; y < height; y += step) {
+        for (let x = 0; x < width; x += step) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          lumSum += lum;
+          lumSumSq += lum * lum;
+          rSum += r;
+          gSum += g;
+          bSum += b;
+          sampleCount++;
+          const bucket = r >> 5 << 6 | g >> 5 << 3 | b >> 5;
+          hist[bucket]++;
+          const isRing = x < ringMargin || y < ringMargin || x >= width - ringMargin || y >= height - ringMargin;
+          if (isRing) {
+            ringLumSum += lum;
+            ringLumSumSq += lum * lum;
+            ringRSum += r;
+            ringGSum += g;
+            ringBSum += b;
+            ringCount++;
+            ringHist[bucket]++;
+            if (lum >= 200) {
+              ringLightSum += lum;
+              ringLightCount++;
+            }
+          }
+          if (x + step < width && y + step < height) {
+            const idxRight = (y * width + (x + step)) * 4;
+            const idxDown = ((y + step) * width + x) * 4;
+            const lumRight = getLum(idxRight);
+            const lumDown = getLum(idxDown);
+            const grad = Math.abs(lum - lumRight) + Math.abs(lum - lumDown);
+            if (grad > 40) {
+              edgeCount++;
+              if (isRing) ringEdgeCount++;
+            }
+          }
+        }
       }
-      const threshold = isWhiteIsh ? 45 : 30;
-      const pixelsToErase = new Uint8Array(drawW * drawH);
-      for (let i = 0; i < len; i += 4) {
+      const avgLum = lumSum / Math.max(1, sampleCount);
+      const variance = lumSumSq / Math.max(1, sampleCount) - avgLum * avgLum;
+      const ringAvgLum = ringLumSum / Math.max(1, ringCount);
+      const ringLightAvg = ringLightCount ? ringLightSum / ringLightCount : ringAvgLum;
+      const ringLightRatio = ringLightCount / Math.max(1, ringCount);
+      const ringVariance = ringLumSumSq / Math.max(1, ringCount) - ringAvgLum * ringAvgLum;
+      const avgR = Math.round((ringCount ? ringRSum : rSum) / Math.max(1, ringCount || sampleCount));
+      const avgG = Math.round((ringCount ? ringGSum : gSum) / Math.max(1, ringCount || sampleCount));
+      const avgB = Math.round((ringCount ? ringBSum : bSum) / Math.max(1, ringCount || sampleCount));
+      let maxBin = 0;
+      for (const count of hist) {
+        if (count > maxBin) maxBin = count;
+      }
+      let ringMaxBin = 0;
+      for (const count of ringHist) {
+        if (count > ringMaxBin) ringMaxBin = count;
+      }
+      const dominantRatio = (ringCount ? ringMaxBin : maxBin) / Math.max(1, ringCount || sampleCount);
+      const edgeDensity = (ringCount ? ringEdgeCount : edgeCount) / Math.max(1, ringCount || sampleCount);
+      return {
+        avgColor: `rgb(${avgR},${avgG},${avgB})`,
+        variance: Math.max(0, variance),
+        ringVariance: Math.max(0, ringVariance),
+        luminance: avgLum,
+        edgeDensity,
+        dominantRatio,
+        bubbleLuminance: ringLightAvg,
+        ringLightRatio
+      };
+    }
+    isBubbleRegion(stats) {
+      if (stats.dominantRatio >= 0.62 && stats.edgeDensity <= 0.1) return true;
+      if (stats.dominantRatio >= 0.56 && stats.edgeDensity <= 0.08 && stats.ringVariance <= 4500) return true;
+      return false;
+    }
+    isComplexRegion(stats) {
+      return stats.edgeDensity >= 0.14 || stats.ringVariance >= 6500;
+    }
+    isShortLabel(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+      const compact = trimmed.replace(/\s+/g, "");
+      const normalized = compact.replace(/[^A-Za-z0-9\u3040-\u30ff\u3400-\u9fff]/g, "");
+      if (!normalized) return false;
+      const hasCjk = /[\u3040-\u30ff\u3400-\u9fff]/.test(normalized);
+      const hasLatin = /[A-Za-z]/.test(normalized);
+      if (normalized.length <= 8) return true;
+      if (hasCjk && normalized.length <= 10) return true;
+      if (hasLatin && normalized.length <= 14) return true;
+      return false;
+    }
+    eraseRegion(ctx, box, info) {
+      const width = Math.max(1, Math.floor(box.x1 - box.x0));
+      const height = Math.max(1, Math.floor(box.y1 - box.y0));
+      const imageData = ctx.getImageData(box.x0, box.y0, width, height);
+      const data = imageData.data;
+      let { bgR, bgG, bgB } = this.sampleEdgeColor(data, width, { x: 0, y: 0, w: width, h: height });
+      if (info.isLightBubble && info.bubbleLuminance >= 205) {
+        bgR = 255;
+        bgG = 255;
+        bgB = 255;
+      }
+      const threshold = info.isBubble ? 35 : 28;
+      const pixelsToErase = new Uint8Array(width * height);
+      for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
@@ -3177,20 +3314,20 @@ ${numberedTexts}`;
           pixelsToErase[i / 4] = 1;
         }
       }
-      const expandedMask = new Uint8Array(drawW * drawH);
-      for (let y = 1; y < drawH - 1; y++) {
-        for (let x = 1; x < drawW - 1; x++) {
-          const idx = y * drawW + x;
+      const expandedMask = new Uint8Array(width * height);
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const idx = y * width + x;
           if (pixelsToErase[idx]) {
             expandedMask[idx] = 1;
             expandedMask[idx - 1] = 1;
             expandedMask[idx + 1] = 1;
-            expandedMask[idx - drawW] = 1;
-            expandedMask[idx + drawW] = 1;
+            expandedMask[idx - width] = 1;
+            expandedMask[idx + width] = 1;
           }
         }
       }
-      for (let i = 0; i < len / 4; i++) {
+      for (let i = 0; i < data.length / 4; i++) {
         if (expandedMask[i]) {
           const idx = i * 4;
           data[idx] = bgR;
@@ -3198,27 +3335,21 @@ ${numberedTexts}`;
           data[idx + 2] = bgB;
         }
       }
-      ctx.putImageData(imageData, drawX, drawY);
-      return { isComplex, isDark, avgColor: `rgb(${bgR},${bgG},${bgB})`, variance, luminance, maskBox };
+      ctx.putImageData(imageData, box.x0, box.y0);
     }
     /**
-     * 在指定的局部区域采样边缘
+     * 在指定的局部区域采样边缘颜色
      */
     sampleEdgeColor(data, totalWidth, box) {
       let rSum = 0, gSum = 0, bSum = 0;
       let count = 0;
-      const samples = [];
       const step = 2;
       const addSample = (x, y) => {
         const idx = (y * totalWidth + x) * 4;
         if (idx < 0 || idx >= data.length) return;
-        const r = data[idx];
-        const g = data[idx + 1];
-        const b = data[idx + 2];
-        rSum += r;
-        gSum += g;
-        bSum += b;
-        samples.push({ r, g, b });
+        rSum += data[idx];
+        gSum += data[idx + 1];
+        bSum += data[idx + 2];
         count++;
       };
       for (let x = box.x; x < box.x + box.w; x += step) {
@@ -3229,16 +3360,12 @@ ${numberedTexts}`;
         addSample(box.x, y);
         addSample(box.x + box.w - 1, y);
       }
-      if (count === 0) return { bgR: 255, bgG: 255, bgB: 255, variance: 0 };
-      const avgR = Math.round(rSum / count);
-      const avgG = Math.round(gSum / count);
-      const avgB = Math.round(bSum / count);
-      let varSum = 0;
-      for (const s of samples) {
-        const dist = Math.pow(s.r - avgR, 2) + Math.pow(s.g - avgG, 2) + Math.pow(s.b - avgB, 2);
-        varSum += dist;
-      }
-      return { bgR: avgR, bgG: avgG, bgB: avgB, variance: varSum / count };
+      if (count === 0) return { bgR: 255, bgG: 255, bgB: 255 };
+      return {
+        bgR: Math.round(rSum / count),
+        bgG: Math.round(gSum / count),
+        bgB: Math.round(bSum / count)
+      };
     }
     /**
      * 通过 Service Worker 代理加载跨域图片
@@ -3274,66 +3401,55 @@ ${numberedTexts}`;
     /**
      * 渲染译文到 Canvas
      */
-    render(canvas, blocks, translations, analysis, options, fontSizeOverrides) {
+    render(canvas, groups, analysis, options) {
       const ctx = canvas.getContext("2d");
-      blocks.forEach((block, index) => {
-        const translation = translations[index];
+      const fontFamily = options.fontFamily || "Arial, sans-serif";
+      groups.forEach((group, index) => {
+        const translation = (group.text || "").trim();
         if (!translation || translation.startsWith("[翻译失败")) return;
-        const blockStats = analysis[index] || { isComplex: false, isDark: false };
-        const { bbox } = block;
-        const renderBox = this.getRenderBox(canvas, bbox, blockStats, translation);
-        const width = renderBox.x1 - renderBox.x0;
-        const height = renderBox.y1 - renderBox.y0;
+        const stats = analysis[index];
+        const renderBox = group.bbox;
+        (stats == null ? void 0 : stats.maskBox) ?? group.bbox;
+        const width = Math.max(1, renderBox.x1 - renderBox.x0);
+        const height = Math.max(1, renderBox.y1 - renderBox.y0);
+        const normalizedText = translation.replace(/\s*\n\s*/g, " ");
+        const baseFontSize = this.getBaseFontSize(group, height);
+        const scale = options.fontScale ?? 1;
+        const minSize = Math.max(11, Math.round(baseFontSize * 0.8));
+        const maxSize = Math.min(52, Math.round(baseFontSize * 1.2));
+        const scaledBase = Math.max(minSize, Math.min(maxSize, baseFontSize * scale));
+        const singleLine = this.isShortLabel(normalizedText);
+        const layout = this.layoutText(ctx, normalizedText, width, height, fontFamily, scaledBase, singleLine, minSize, maxSize);
         let mainColor = "#000000";
         let strokeColor = "#FFFFFF";
-        if (blockStats.isDark) {
+        if (stats == null ? void 0 : stats.isDark) {
           mainColor = "#FFFFFF";
           strokeColor = "#000000";
-        } else {
-          if (options.fontColor && options.fontColor !== "#000000") {
-            mainColor = options.fontColor;
-          }
+        } else if (options.fontColor && options.fontColor !== "#000000") {
+          mainColor = options.fontColor;
         }
-        const fontFamily = options.fontFamily || "Arial, sans-serif";
-        const normalizedText = translation.replace(/\s*\n\s*/g, " ");
-        const overrideSize = fontSizeOverrides == null ? void 0 : fontSizeOverrides[index];
-        const hasOverride = typeof overrideSize === "number" && overrideSize > 0;
-        const singleLine = hasOverride ? true : this.shouldForceSingleLine(normalizedText);
-        const fontSize = hasOverride ? overrideSize : this.calculateBestFitFontSize(ctx, normalizedText, width, height, fontFamily, singleLine);
-        ctx.font = `bold ${fontSize}px ${fontFamily}`;
+        if ((stats == null ? void 0 : stats.renderMode) === "mask" && !this.isShortLabel(normalizedText)) {
+          const baseAlpha = options.maskOpacity ?? (stats.isDark ? 0.36 : 0.24);
+          const alpha = stats.isDark ? Math.min(0.7, baseAlpha + 0.12) : baseAlpha;
+          const fillStyle = stats.isDark ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
+          ctx.fillStyle = fillStyle;
+          ctx.fillRect(renderBox.x0, renderBox.y0, width, height);
+        }
+        ctx.font = `bold ${layout.fontSize}px ${fontFamily}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        if (blockStats.isComplex && !this.shouldSkipMask(normalizedText)) {
-          const baseBox = blockStats.maskBox ?? bbox;
-          const baseW = Math.max(1, baseBox.x1 - baseBox.x0);
-          const baseH = Math.max(1, baseBox.y1 - baseBox.y0);
-          const textWidth = ctx.measureText(normalizedText).width;
-          const padX = Math.max(6, fontSize * 0.6);
-          const targetW = Math.max(baseW, textWidth + padX * 2);
-          const targetH = Math.max(baseH, fontSize * 1.3);
-          const centerX2 = (bbox.x0 + bbox.x1) / 2;
-          const centerY = (bbox.y0 + bbox.y1) / 2;
-          const x0 = Math.max(0, centerX2 - targetW / 2);
-          const y0 = Math.max(0, centerY - targetH / 2);
-          const x1 = Math.min(canvas.width, centerX2 + targetW / 2);
-          const y1 = Math.min(canvas.height, centerY + targetH / 2);
-          const alpha = blockStats.isDark ? 0.26 : 0.16;
-          const baseColor = blockStats.avgColor || (blockStats.isDark ? "rgb(0,0,0)" : "rgb(255,255,255)");
-          const rgbaMatch = baseColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-          const fillStyle = rgbaMatch ? `rgba(${rgbaMatch[1]}, ${rgbaMatch[2]}, ${rgbaMatch[3]}, ${alpha})` : blockStats.isDark ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
-          ctx.fillStyle = fillStyle;
-          ctx.fillRect(x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0));
-        }
-        const lines = singleLine ? [normalizedText] : this.wrapText(ctx, normalizedText, width);
-        const lineHeight = fontSize * (singleLine ? 1.05 : 1.15);
-        const totalHeight = lines.length * lineHeight;
+        const lineHeight = layout.fontSize * (singleLine ? 1.05 : 1.15);
+        const totalHeight = layout.lines.length * lineHeight;
         const startY = renderBox.y0 + (height - totalHeight) / 2 + lineHeight / 2;
         const centerX = renderBox.x0 + width / 2;
-        lines.forEach((line, lineIndex) => {
+        layout.lines.forEach((line, lineIndex) => {
           const y = startY + lineIndex * lineHeight;
-          let strokeWidth = Math.max(3, fontSize * 0.15);
-          if (blockStats.isComplex) {
-            strokeWidth = Math.max(4, fontSize * 0.25);
+          let strokeWidth = Math.max(3, layout.fontSize * 0.15);
+          if ((stats == null ? void 0 : stats.renderMode) === "mask") {
+            strokeWidth = Math.max(4, layout.fontSize * 0.25);
+          }
+          if (this.isShortLabel(normalizedText)) {
+            strokeWidth = Math.max(3, layout.fontSize * 0.2);
           }
           ctx.strokeStyle = strokeColor;
           ctx.lineWidth = strokeWidth;
@@ -3344,74 +3460,32 @@ ${numberedTexts}`;
           ctx.fillText(line, centerX, y);
         });
       });
-      console.log(`[MangaFlow] ✅ 渲染完成 (v2 Smart Fit)，共 ${blocks.length} 个文本块`);
+      console.log(`[MangaFlow] ✅ 渲染完成 (group render)，共 ${groups.length} 个区域`);
     }
-    getRenderBox(canvas, bbox, blockStats, text) {
-      let x0 = bbox.x0;
-      let y0 = bbox.y0;
-      let x1 = bbox.x1;
-      let y1 = bbox.y1;
-      const isShort = this.shouldForceSingleLine(text);
-      if (isShort) {
-        const width = x1 - x0;
-        const height = y1 - y0;
-        const targetW = Math.max(width, height * 2.6);
-        const extraW = Math.max(0, (targetW - width) / 2);
-        const extraH = Math.max(0, height * 0.2);
-        x0 -= extraW;
-        x1 += extraW;
-        y0 -= extraH;
-        y1 += extraH;
+    getBaseFontSize(group, boxHeight) {
+      if (!group.blocks.length) {
+        return Math.max(12, Math.min(boxHeight * 0.7, 56));
       }
-      x0 = Math.max(0, x0);
-      y0 = Math.max(0, y0);
-      x1 = Math.min(canvas.width, x1);
-      y1 = Math.min(canvas.height, y1);
-      return { x0, y0, x1, y1 };
+      const avgHeight = group.blocks.reduce((sum, b) => sum + (b.bbox.y1 - b.bbox.y0), 0) / group.blocks.length;
+      return Math.max(12, Math.min(avgHeight * 0.9, 56));
     }
-    shouldForceSingleLine(text) {
-      const trimmed = text.trim();
-      if (!trimmed) return false;
-      const compact = trimmed.replace(/\s+/g, "");
-      const normalized = compact.replace(/[^A-Za-z0-9\u3040-\u30ff\u3400-\u9fff]/g, "");
-      if (!normalized) return false;
-      const hasCjk = /[\u3040-\u30ff\u3400-\u9fff]/.test(normalized);
-      const hasLatin = /[A-Za-z]/.test(normalized);
-      if (normalized.length <= 8) return true;
-      if (hasCjk && normalized.length <= 10) return true;
-      if (hasLatin && normalized.length <= 14) return true;
-      return false;
-    }
-    shouldSkipMask(text) {
-      const trimmed = text.trim();
-      if (!trimmed) return true;
-      if (/^[\W_]+$/.test(trimmed)) return true;
-      if (trimmed.length <= 1) return true;
-      return false;
-    }
-    /**
-     * 计算最佳适应字号 (从大到小尝试)
-     */
-    calculateBestFitFontSize(ctx, text, maxWidth, maxHeight, fontFamily, singleLine = false) {
-      let startSize = Math.min(maxHeight * (singleLine ? 0.85 : 0.8), 64);
-      const minSize = 12;
-      if (text.length > 10) startSize = Math.min(startSize, maxHeight * (singleLine ? 0.8 : 0.7));
-      for (let size = startSize; size >= minSize; size -= 2) {
+    layoutText(ctx, text, maxWidth, maxHeight, fontFamily, baseSize, singleLine, minSize, maxSize) {
+      let size = Math.min(baseSize, maxSize);
+      for (; size >= minSize; size -= 2) {
         ctx.font = `bold ${size}px ${fontFamily}`;
         const lines = singleLine ? [text] : this.wrapText(ctx, text, maxWidth);
-        const lineHeightFactor = singleLine ? 1.05 : 1.15;
-        const totalHeight = lines.length * (size * lineHeightFactor);
-        const fitsHeight = totalHeight <= maxHeight * (singleLine ? 1 : 0.95);
+        const lineHeight = size * (singleLine ? 1.05 : 1.15);
+        const totalHeight = lines.length * lineHeight;
+        const fitsHeight = totalHeight <= maxHeight * 0.95;
         const fitsWidth = singleLine ? ctx.measureText(text).width <= maxWidth * 0.95 : true;
         if (fitsHeight && fitsWidth) {
-          return size;
+          return { lines, fontSize: size };
         }
       }
-      return minSize;
+      ctx.font = `bold ${minSize}px ${fontFamily}`;
+      const fallbackLines = singleLine ? [text] : this.wrapText(ctx, text, maxWidth);
+      return { lines: fallbackLines, fontSize: minSize };
     }
-    /**
-     * 文本换行处理
-     */
     wrapText(ctx, text, maxWidth) {
       const lines = [];
       const chars = text.split("");
@@ -3430,6 +3504,19 @@ ${numberedTexts}`;
         lines.push(currentLine);
       }
       return lines;
+    }
+    isShortLabel(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+      const compact = trimmed.replace(/\s+/g, "");
+      const normalized = compact.replace(/[^A-Za-z0-9\u3040-\u30ff\u3400-\u9fff]/g, "");
+      if (!normalized) return false;
+      const hasCjk = /[\u3040-\u30ff\u3400-\u9fff]/.test(normalized);
+      const hasLatin = /[A-Za-z]/.test(normalized);
+      if (normalized.length <= 8) return true;
+      if (hasCjk && normalized.length <= 10) return true;
+      if (hasLatin && normalized.length <= 14) return true;
+      return false;
     }
   }
   var localforage$1 = { exports: {} };
@@ -5756,6 +5843,9 @@ ${numberedTexts}`;
         /^([가-힣])\1{1,3}$/,
         /^([가-힣]{2})\1{1,2}$/,
         /^([가-힣]{3})\1$/,
+        /^[ㄱ-ㅎ]{2,}$/,
+        /^[ㅏ-ㅣ]{2,}$/,
+        /^[ㅋㅎ]{2,}$/,
         /^(쿵쿵|두근두근|부릉|쾅쾅|쾅|팍|퍽|퍽퍽)+$/i,
         // 日文拟声词
         /^[ァ-ヴー]{1,6}$/,
@@ -6104,7 +6194,7 @@ ${numberedTexts}`;
     }
     // 翻译单张图片
     async translateSingleImage(img) {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
       if (!this.settings) {
         await this.loadSettings();
       }
@@ -6223,12 +6313,15 @@ ${numberedTexts}`;
           }
         });
       }
-      const filteredBlocks = keptBlocks;
+      const filteredBlocks = this.applyContextualFilters(keptBlocks, ocrResult.blocks);
       if (!filteredBlocks.length) {
         console.log(`[MangaFlow] ⚠️ ${imgName}: 过滤后无需翻译的文本`);
         return;
       }
-      const groups = this.groupTextBlocks(filteredBlocks);
+      const groups = this.filterGroupsForTranslation(
+        this.groupTextBlocks(filteredBlocks),
+        ocrResult.blocks
+      );
       const engine = ((_k = this.settings) == null ? void 0 : _k.translateEngine) || "google";
       console.log(`[MangaFlow] 🌐 翻译中... (引擎: ${engine}, 共 ${groups.length} 条)`);
       const translateStartTime = Date.now();
@@ -6271,19 +6364,27 @@ ${numberedTexts}`;
         return;
       }
       console.log(`[MangaFlow] 🎨 渲染中...`);
-      const { blocks: renderBlocks, translations: renderTranslations, fontSizes } = this.expandTranslationsToBlocks(groups, translations);
-      const { canvas, analysis } = await this.imageProcessor.processImage(img, renderBlocks);
+      const renderGroups = this.buildRenderGroups(groups, translations);
+      const activeGroups = renderGroups.filter((g) => g.text && !g.text.startsWith("[翻译失败"));
+      if (!activeGroups.length) {
+        console.log(`[MangaFlow] ⚠️ ${imgName}: 无有效译文，跳过渲染`);
+        return;
+      }
+      const { canvas, analysis } = await this.imageProcessor.processImage(img, activeGroups);
       if (devMode) {
-        const maskBoxes = analysis.map((item) => item.maskBox).filter((box) => !!box);
+        const maskBoxes = analysis.map((item) => item.maskBox);
         if (maskBoxes.length) {
           this.debugOverlay.setMaskBoxes(img, maskBoxes);
         }
       }
-      this.renderer.render(canvas, renderBlocks, renderTranslations, analysis, {
-        fontSize: ((_l = this.settings) == null ? void 0 : _l.fontSize) || 14,
-        fontColor: ((_m = this.settings) == null ? void 0 : _m.fontColor) || "#000000",
+      const fontScale = ((_l = this.settings) == null ? void 0 : _l.fontScale) ?? (((_m = this.settings) == null ? void 0 : _m.fontSize) ? this.settings.fontSize / 14 : 1);
+      this.renderer.render(canvas, activeGroups, analysis, {
+        fontSize: ((_n = this.settings) == null ? void 0 : _n.fontSize) || 14,
+        fontScale,
+        fontColor: ((_o = this.settings) == null ? void 0 : _o.fontColor) || "#000000",
+        maskOpacity: (_p = this.settings) == null ? void 0 : _p.maskOpacity,
         fontFamily: "Arial, sans-serif"
-      }, fontSizes);
+      });
       try {
         const renderedImage = canvas.toDataURL("image/png");
         img.src = renderedImage;
@@ -6336,151 +6437,86 @@ ${numberedTexts}`;
       const maxW = Math.max(ax, bx);
       return vGap < maxH * 0.6 && hGap < maxW * 0.5;
     }
-    expandTranslationsToBlocks(groups, translations) {
-      const blocks = [];
-      const texts = [];
-      const fontSizes = [];
-      const ctx = document.createElement("canvas").getContext("2d");
-      const fontFamily = "Arial, sans-serif";
-      groups.forEach((group, index) => {
-        const groupBlocks = [...group.blocks].sort((a, b) => {
-          if (a.bbox.y0 === b.bbox.y0) return a.bbox.x0 - b.bbox.x0;
-          return a.bbox.y0 - b.bbox.y0;
-        });
-        const translation = translations[index] || "";
-        const lines = this.splitTranslationIntoLines(translation, groupBlocks, ctx, fontFamily);
-        const fontSize = this.calculateGroupFontSize(groupBlocks, lines, ctx, fontFamily);
-        groupBlocks.forEach((block, lineIndex) => {
-          blocks.push(block);
-          texts.push(lines[lineIndex] ?? "");
-          fontSizes.push(fontSize);
-        });
+    buildRenderGroups(groups, translations) {
+      return groups.map((group, index) => ({
+        bbox: group.bbox,
+        text: translations[index] || "",
+        blocks: group.blocks
+      }));
+    }
+    filterGroupsForTranslation(groups, allBlocks) {
+      if (!groups.length) return groups;
+      const { medianArea } = this.computeMedianStats(allBlocks);
+      return groups.filter((group) => {
+        const compact = group.text.replace(/\s+/g, "");
+        const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(compact);
+        const isUpper = /^[A-Z]{2,6}$/.test(compact);
+        const isShort = isCjk ? compact.length <= 3 : compact.length <= 4;
+        const groupArea = (group.bbox.x1 - group.bbox.x0) * (group.bbox.y1 - group.bbox.y0);
+        if (isUpper && groupArea > medianArea * 1.2) {
+          return false;
+        }
+        if (isShort && group.blocks.length <= 2 && groupArea > medianArea * 1.6) {
+          return false;
+        }
+        return true;
       });
-      return { blocks, translations: texts, fontSizes };
     }
-    calculateGroupFontSize(blocks, lines, ctx, fontFamily) {
-      const heights = blocks.map((b) => b.bbox.y1 - b.bbox.y0);
-      const avgHeight = heights.reduce((sum, h) => sum + h, 0) / Math.max(1, heights.length);
-      let size = Math.max(12, Math.min(avgHeight * 0.8, 48));
-      ctx.font = `bold ${Math.round(size)}px ${fontFamily}`;
-      let minScale = 1;
-      blocks.forEach((block, index) => {
-        const line = (lines[index] ?? "").replace(/\s+/g, " ").trim();
-        if (!line) return;
-        const textWidth = ctx.measureText(line).width;
-        const blockWidth = Math.max(1, block.bbox.x1 - block.bbox.x0);
-        if (textWidth > blockWidth * 0.95) {
-          minScale = Math.min(minScale, blockWidth * 0.95 / textWidth);
+    applyContextualFilters(keptBlocks, allBlocks) {
+      if (!keptBlocks.length) return [];
+      const { medianArea, medianHeight } = this.computeMedianStats(allBlocks);
+      return keptBlocks.filter((block) => {
+        const text = block.text.trim();
+        const compact = text.replace(/\s+/g, "");
+        const area = (block.bbox.x1 - block.bbox.x0) * (block.bbox.y1 - block.bbox.y0);
+        const height = block.bbox.y1 - block.bbox.y0;
+        const width = block.bbox.x1 - block.bbox.x0;
+        const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(text);
+        const isUpper = /^[A-Z]{2,6}$/.test(compact);
+        const isShort = compact.length <= 3;
+        const isLarge = area > medianArea * 2.6 || height > medianHeight * 1.7;
+        const isolated = !keptBlocks.some((other) => other !== block && this.isNearBlock(other, block));
+        const aspect = width > 0 && height > 0 ? Math.max(width / height, height / width) : 1;
+        const edgeDensity = this.estimateEdgeDensity(allBlocks, block);
+        if (isCjk && isShort && isLarge && isolated) {
+          console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: "${text}"`);
+          return false;
         }
+        if (!isCjk && isShort && isolated && isLarge) {
+          console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: "${text}"`);
+          return false;
+        }
+        if (isUpper && isolated && area > medianArea * 1.2) {
+          console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: "${text}"`);
+          return false;
+        }
+        if (isShort && isolated && aspect >= 2.4 && area > medianArea * 1.8) {
+          console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: "${text}"`);
+          return false;
+        }
+        if (isShort && isolated && edgeDensity >= 0.2 && area > medianArea * 1.2) {
+          console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: "${text}"`);
+          return false;
+        }
+        return true;
       });
-      if (minScale < 1) {
-        size = Math.max(12, Math.floor(size * minScale));
-      }
-      return size;
     }
-    splitTranslationIntoLines(text, blocks, ctx, fontFamily) {
-      const targetCount = Math.max(1, blocks.length);
-      const trimmed = text.trim();
-      if (!trimmed) return new Array(targetCount).fill("");
-      let lines = trimmed.split(/\n+/).map((t) => t.trim()).filter(Boolean);
-      if (lines.length <= 1) {
-        const punctuated = this.splitByPunctuation(trimmed);
-        if (punctuated.length > 1) {
-          lines = punctuated;
-        }
-      }
-      if (lines.length <= 1) {
-        const groupBox = blocks.reduce(
-          (acc, b) => ({
-            x0: Math.min(acc.x0, b.bbox.x0),
-            y0: Math.min(acc.y0, b.bbox.y0),
-            x1: Math.max(acc.x1, b.bbox.x1),
-            y1: Math.max(acc.y1, b.bbox.y1)
-          }),
-          { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
-        );
-        const avgHeight = blocks.reduce((sum, b) => sum + (b.bbox.y1 - b.bbox.y0), 0) / blocks.length;
-        const fontSize = Math.max(12, Math.min(avgHeight * 0.8, 48));
-        ctx.font = `bold ${Math.round(fontSize)}px ${fontFamily}`;
-        lines = this.wrapText(ctx, trimmed, Math.max(1, groupBox.x1 - groupBox.x0));
-      }
-      return this.balanceLines(lines, targetCount);
+    computeMedianStats(blocks) {
+      if (!blocks.length) return { medianArea: 1, medianHeight: 1 };
+      const areas = blocks.map((b) => (b.bbox.x1 - b.bbox.x0) * (b.bbox.y1 - b.bbox.y0)).sort((a, b) => a - b);
+      const heights = blocks.map((b) => b.bbox.y1 - b.bbox.y0).sort((a, b) => a - b);
+      const mid = Math.floor(areas.length / 2);
+      const medianArea = areas[mid] || areas[0];
+      const medianHeight = heights[mid] || heights[0];
+      return { medianArea, medianHeight };
     }
-    splitByPunctuation(text) {
-      const parts = [];
-      let current = "";
-      const punctuation = "。！？!?.,，；;：:";
-      for (const ch of text) {
-        current += ch;
-        if (punctuation.includes(ch)) {
-          const value = current.trim();
-          if (value) parts.push(value);
-          current = "";
-        }
-      }
-      const tail = current.trim();
-      if (tail) parts.push(tail);
-      return parts;
-    }
-    balanceLines(lines, targetCount) {
-      let result = lines.map((line) => line.trim()).filter(Boolean);
-      if (result.length === 0) result = [""];
-      while (result.length > targetCount) {
-        const tail = result.pop();
-        result[result.length - 1] = `${result[result.length - 1]} ${tail}`.trim();
-      }
-      let guard = 0;
-      while (result.length < targetCount && guard < 20) {
-        guard += 1;
-        let longestIndex = 0;
-        for (let i = 1; i < result.length; i++) {
-          if (result[i].length > result[longestIndex].length) {
-            longestIndex = i;
-          }
-        }
-        const [a, b] = this.splitLineInHalf(result[longestIndex]);
-        result.splice(longestIndex, 1, a, b);
-        if (!b) break;
-      }
-      while (result.length < targetCount) {
-        result.push("");
-      }
-      return result;
-    }
-    splitLineInHalf(line) {
-      const trimmed = line.trim();
-      if (!trimmed) return ["", ""];
-      const mid = Math.floor(trimmed.length / 2);
-      const leftSpace = trimmed.lastIndexOf(" ", mid);
-      const rightSpace = trimmed.indexOf(" ", mid + 1);
-      let cut = mid;
-      if (leftSpace > 0) cut = leftSpace;
-      else if (rightSpace > 0) cut = rightSpace;
-      const first = trimmed.slice(0, cut).trim();
-      const second = trimmed.slice(cut).trim();
-      if (!first || !second) {
-        return [trimmed, ""];
-      }
-      return [first, second];
-    }
-    wrapText(ctx, text, maxWidth) {
-      const lines = [];
-      const chars = text.split("");
-      let currentLine = "";
-      for (const char of chars) {
-        const testLine = currentLine + char;
-        const metrics = ctx.measureText(testLine);
-        if (metrics.width > maxWidth && currentLine.length > 0) {
-          lines.push(currentLine);
-          currentLine = char;
-        } else {
-          currentLine = testLine;
-        }
-      }
-      if (currentLine) {
-        lines.push(currentLine);
-      }
-      return lines;
+    estimateEdgeDensity(blocks, block) {
+      const width = block.bbox.x1 - block.bbox.x0;
+      const height = block.bbox.y1 - block.bbox.y0;
+      if (width <= 0 || height <= 0) return 0;
+      const aspect = Math.max(width / height, height / width);
+      if (aspect >= 2.8) return 0.25;
+      return 0.08;
     }
     // 暂停
     pause() {
@@ -6500,38 +6536,80 @@ ${numberedTexts}`;
           confidence: block.confidence
         }));
       }
+      const { medianArea, medianHeight } = this.computeMedianStats(blocks);
       const sorted = [...blocks].sort((a, b) => a.bbox.y0 - b.bbox.y0);
-      const groups = [];
-      const isClose = (g, b) => {
-        const gb = g.bbox;
-        const bh = b.bbox.y1 - b.bbox.y0;
-        const gh = gb.y1 - gb.y0;
-        const vGap = Math.max(0, Math.max(gb.y0 - b.bbox.y1, b.bbox.y0 - gb.y1));
-        const hGap = Math.max(0, Math.max(gb.x0 - b.bbox.x1, b.bbox.x0 - gb.x1));
-        const maxH = Math.max(gh, bh);
-        const maxW = Math.max(gb.x1 - gb.x0, b.bbox.x1 - b.bbox.x0);
-        return vGap < maxH * 0.6 && hGap < maxW * 0.5;
+      const blockMeta = sorted.map((block) => {
+        const width = block.bbox.x1 - block.bbox.x0;
+        const height = block.bbox.y1 - block.bbox.y0;
+        const area = Math.max(1, width * height);
+        const text = block.text.trim();
+        const compact = text.replace(/\s+/g, "");
+        const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(text);
+        const isUpper = /^[A-Z]{2,6}$/.test(compact);
+        const isShort = compact.length <= (isCjk ? 2 : 4);
+        const aspect = width > 0 && height > 0 ? Math.max(width / height, height / width) : 1;
+        const isDecorativeLike = isShort && area > medianArea * 1.6 && (height > medianHeight * 1.4 || aspect >= 2.4) || isUpper && area > medianArea * 1.2;
+        return { width, height, area, isDecorativeLike };
+      });
+      const n = sorted.length;
+      const parent = Array.from({ length: n }, (_, i) => i);
+      const find = (x) => {
+        if (parent[x] !== x) parent[x] = find(parent[x]);
+        return parent[x];
       };
-      for (const block of sorted) {
-        let merged = false;
-        for (const g of groups) {
-          if (isClose(g, block)) {
-            g.blocks.push(block);
-            g.bbox = {
-              x0: Math.min(g.bbox.x0, block.bbox.x0),
-              y0: Math.min(g.bbox.y0, block.bbox.y0),
-              x1: Math.max(g.bbox.x1, block.bbox.x1),
-              y1: Math.max(g.bbox.y1, block.bbox.y1)
-            };
-            merged = true;
-            break;
+      const union = (a, b) => {
+        const ra = find(a);
+        const rb = find(b);
+        if (ra !== rb) parent[rb] = ra;
+      };
+      const isClose = (a, b, metaA, metaB) => {
+        const bh = metaB.height;
+        const ah = metaA.height;
+        const vGap = Math.max(0, Math.max(a.bbox.y0 - b.bbox.y1, b.bbox.y0 - a.bbox.y1));
+        const hGap = Math.max(0, Math.max(a.bbox.x0 - b.bbox.x1, b.bbox.x0 - a.bbox.x1));
+        const maxH = Math.max(ah, bh);
+        const maxW = Math.max(metaA.width, metaB.width);
+        const overlap = Math.max(0, Math.min(a.bbox.x1, b.bbox.x1) - Math.max(a.bbox.x0, b.bbox.x0));
+        const minW = Math.max(1, Math.min(metaA.width, metaB.width));
+        const overlapRatio = overlap / minW;
+        const isDecorPair = metaA.isDecorativeLike || metaB.isDecorativeLike;
+        if (metaA.isDecorativeLike !== metaB.isDecorativeLike) {
+          return false;
+        }
+        if (isDecorPair) {
+          const nearVertDecor = vGap < Math.min(maxH * 0.4, medianHeight * 0.6);
+          const nearHorizDecor = overlapRatio >= 0.5 || hGap < maxW * 0.2;
+          return nearVertDecor && nearHorizDecor;
+        }
+        const nearVert = vGap < Math.min(maxH * 0.7, medianHeight * 0.9);
+        const nearHoriz = overlapRatio >= 0.3 || hGap < maxW * 0.3;
+        return nearVert && nearHoriz;
+      };
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          if (isClose(sorted[i], sorted[j], blockMeta[i], blockMeta[j])) {
+            union(i, j);
           }
         }
-        if (!merged) {
-          groups.push({ bbox: { ...block.bbox }, blocks: [block] });
+      }
+      const groupMap = /* @__PURE__ */ new Map();
+      for (let i = 0; i < n; i++) {
+        const root = find(i);
+        const block = sorted[i];
+        const existing = groupMap.get(root);
+        if (!existing) {
+          groupMap.set(root, { bbox: { ...block.bbox }, blocks: [block] });
+        } else {
+          existing.blocks.push(block);
+          existing.bbox = {
+            x0: Math.min(existing.bbox.x0, block.bbox.x0),
+            y0: Math.min(existing.bbox.y0, block.bbox.y0),
+            x1: Math.max(existing.bbox.x1, block.bbox.x1),
+            y1: Math.max(existing.bbox.y1, block.bbox.y1)
+          };
         }
       }
-      return groups.map((g) => {
+      return Array.from(groupMap.values()).map((g) => {
         const sortedBlocks = g.blocks.sort((a, b) => {
           if (a.bbox.y0 === b.bbox.y0) return a.bbox.x0 - b.bbox.x0;
           return a.bbox.y0 - b.bbox.y0;

@@ -10,7 +10,9 @@ interface Settings {
     deeplxUrl?: string;
     deeplApiKey?: string;
     fontSize?: number;
+    fontScale?: number;
     fontColor?: string;
+    maskOpacity?: number;
     ocrEngine?: string;
     cloudOcrKey?: string;
 }
@@ -46,7 +48,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             targetLang: 'zh',
             translateEngine: 'google',
             fontSize: 14,
+            fontScale: 1.0,
             fontColor: '#000000',
+            maskOpacity: 0.24,
             ocrEngine: 'local',
         };
         await chrome.storage.local.set({ settings });

@@ -11,7 +11,7 @@ import { TextFilter } from '../utils/text-filter';
 import { showToast } from '@/content/ui/toast';
 import { TextDetector } from './text-detector';
 import { DebugOverlayManager } from './debug-overlay';
-import type { TextBlock, BBox } from '../../types';
+import type { TextBlock, BBox, RenderGroup } from '../../types';
 import { DEV_MODE } from '../../config/app-config';
 
 type TextGroup = {
@@ -250,7 +250,7 @@ export class TranslationController {
                 });
         }
 
-        const filteredBlocks = keptBlocks;
+        const filteredBlocks = this.applyContextualFilters(keptBlocks, ocrResult.blocks);
 
         if (!filteredBlocks.length) {
             console.log(`[MangaFlow] ⚠️ ${imgName}: 过滤后无需翻译的文本`);
@@ -258,7 +258,10 @@ export class TranslationController {
         }
 
         // 2.5 文本块聚类（按气泡/段落合并）
-        const groups = this.groupTextBlocks(filteredBlocks);
+        const groups = this.filterGroupsForTranslation(
+            this.groupTextBlocks(filteredBlocks),
+            ocrResult.blocks
+        );
 
         // 3. 批量翻译（按组）
         const engine = this.settings?.translateEngine || 'google';
@@ -308,25 +311,30 @@ export class TranslationController {
             return;
         }
 
-        // 4. 背景修复 + 渲染
+        // 4. 背景修复 + 渲染（按组）
         console.log(`[MangaFlow] 🎨 渲染中...`);
-        const { blocks: renderBlocks, translations: renderTranslations, fontSizes } =
-            this.expandTranslationsToBlocks(groups, translations);
+        const renderGroups = this.buildRenderGroups(groups, translations);
+        const activeGroups = renderGroups.filter((g) => g.text && !g.text.startsWith('[翻译失败'));
+        if (!activeGroups.length) {
+            console.log(`[MangaFlow] ⚠️ ${imgName}: 无有效译文，跳过渲染`);
+            return;
+        }
 
-        const { canvas, analysis } = await this.imageProcessor.processImage(img, renderBlocks);
+        const { canvas, analysis } = await this.imageProcessor.processImage(img, activeGroups);
         if (devMode) {
-            const maskBoxes = analysis
-                .map((item) => item.maskBox)
-                .filter((box): box is BBox => !!box);
+            const maskBoxes = analysis.map((item) => item.maskBox);
             if (maskBoxes.length) {
                 this.debugOverlay.setMaskBoxes(img, maskBoxes);
             }
         }
-        this.renderer.render(canvas, renderBlocks, renderTranslations, analysis, {
+        const fontScale = this.settings?.fontScale ?? (this.settings?.fontSize ? this.settings.fontSize / 14 : 1);
+        this.renderer.render(canvas, activeGroups, analysis, {
             fontSize: this.settings?.fontSize || 14,
+            fontScale,
             fontColor: this.settings?.fontColor || '#000000',
+            maskOpacity: this.settings?.maskOpacity,
             fontFamily: 'Arial, sans-serif',
-        }, fontSizes);
+        });
 
         // 5. 替换原图
         try {
@@ -394,191 +402,101 @@ export class TranslationController {
         return vGap < maxH * 0.6 && hGap < maxW * 0.5;
     }
 
-    private expandTranslationsToBlocks(
-        groups: TextGroup[],
-        translations: string[]
-    ): { blocks: TextBlock[]; translations: string[]; fontSizes: number[] } {
-        const blocks: TextBlock[] = [];
-        const texts: string[] = [];
-        const fontSizes: number[] = [];
-        const ctx = document.createElement('canvas').getContext('2d')!;
-        const fontFamily = 'Arial, sans-serif';
+    private buildRenderGroups(groups: TextGroup[], translations: string[]): RenderGroup[] {
+        return groups.map((group, index) => ({
+            bbox: group.bbox,
+            text: translations[index] || '',
+            blocks: group.blocks,
+        }));
+    }
 
-        groups.forEach((group, index) => {
-            const groupBlocks = [...group.blocks].sort((a, b) => {
-                if (a.bbox.y0 === b.bbox.y0) return a.bbox.x0 - b.bbox.x0;
-                return a.bbox.y0 - b.bbox.y0;
-            });
-            const translation = translations[index] || '';
-            const lines = this.splitTranslationIntoLines(translation, groupBlocks, ctx, fontFamily);
-            const fontSize = this.calculateGroupFontSize(groupBlocks, lines, ctx, fontFamily);
+    private filterGroupsForTranslation(groups: TextGroup[], allBlocks: TextBlock[]): TextGroup[] {
+        if (!groups.length) return groups;
+        const { medianArea } = this.computeMedianStats(allBlocks);
+        return groups.filter((group) => {
+            const compact = group.text.replace(/\s+/g, '');
+            const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(compact);
+            const isUpper = /^[A-Z]{2,6}$/.test(compact);
+            const isShort = isCjk ? compact.length <= 3 : compact.length <= 4;
+            const groupArea = (group.bbox.x1 - group.bbox.x0) * (group.bbox.y1 - group.bbox.y0);
 
-            groupBlocks.forEach((block, lineIndex) => {
-                blocks.push(block);
-                texts.push(lines[lineIndex] ?? '');
-                fontSizes.push(fontSize);
-            });
+            if (isUpper && groupArea > medianArea * 1.2) {
+                return false;
+            }
+
+            if (isShort && group.blocks.length <= 2 && groupArea > medianArea * 1.6) {
+                return false;
+            }
+
+            return true;
         });
-
-        return { blocks, translations: texts, fontSizes };
     }
 
-    private calculateGroupFontSize(
-        blocks: TextBlock[],
-        lines: string[],
-        ctx: CanvasRenderingContext2D,
-        fontFamily: string
-    ): number {
-        const heights = blocks.map((b) => b.bbox.y1 - b.bbox.y0);
-        const avgHeight = heights.reduce((sum, h) => sum + h, 0) / Math.max(1, heights.length);
-        let size = Math.max(12, Math.min(avgHeight * 0.8, 48));
+    private applyContextualFilters(keptBlocks: TextBlock[], allBlocks: TextBlock[]): TextBlock[] {
+        if (!keptBlocks.length) return [];
+        const { medianArea, medianHeight } = this.computeMedianStats(allBlocks);
 
-        ctx.font = `bold ${Math.round(size)}px ${fontFamily}`;
-        let minScale = 1;
-        blocks.forEach((block, index) => {
-            const line = (lines[index] ?? '').replace(/\s+/g, ' ').trim();
-            if (!line) return;
-            const textWidth = ctx.measureText(line).width;
-            const blockWidth = Math.max(1, block.bbox.x1 - block.bbox.x0);
-            if (textWidth > blockWidth * 0.95) {
-                minScale = Math.min(minScale, (blockWidth * 0.95) / textWidth);
+        return keptBlocks.filter((block) => {
+            const text = block.text.trim();
+            const compact = text.replace(/\s+/g, '');
+            const area = (block.bbox.x1 - block.bbox.x0) * (block.bbox.y1 - block.bbox.y0);
+            const height = block.bbox.y1 - block.bbox.y0;
+            const width = block.bbox.x1 - block.bbox.x0;
+            const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(text);
+            const isUpper = /^[A-Z]{2,6}$/.test(compact);
+            const isShort = compact.length <= 3;
+            const isLarge = area > medianArea * 2.6 || height > medianHeight * 1.7;
+            const isolated = !keptBlocks.some((other) => other !== block && this.isNearBlock(other, block));
+            const aspect = width > 0 && height > 0 ? Math.max(width / height, height / width) : 1;
+            const edgeDensity = this.estimateEdgeDensity(allBlocks, block);
+
+            if (isCjk && isShort && isLarge && isolated) {
+                console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: \"${text}\"`);
+                return false;
             }
+
+            if (!isCjk && isShort && isolated && isLarge) {
+                console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: \"${text}\"`);
+                return false;
+            }
+
+            if (isUpper && isolated && area > medianArea * 1.2) {
+                console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: \"${text}\"`);
+                return false;
+            }
+
+            if (isShort && isolated && aspect >= 2.4 && area > medianArea * 1.8) {
+                console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: \"${text}\"`);
+                return false;
+            }
+
+            if (isShort && isolated && edgeDensity >= 0.2 && area > medianArea * 1.2) {
+                console.log(`[MangaFlow] ⚠️ 拟声词/装饰过滤: \"${text}\"`);
+                return false;
+            }
+
+            return true;
         });
-
-        if (minScale < 1) {
-            size = Math.max(12, Math.floor(size * minScale));
-        }
-
-        return size;
     }
 
-    private splitTranslationIntoLines(
-        text: string,
-        blocks: TextBlock[],
-        ctx: CanvasRenderingContext2D,
-        fontFamily: string
-    ): string[] {
-        const targetCount = Math.max(1, blocks.length);
-        const trimmed = text.trim();
-        if (!trimmed) return new Array(targetCount).fill('');
-
-        let lines = trimmed.split(/\n+/).map((t) => t.trim()).filter(Boolean);
-
-        if (lines.length <= 1) {
-            const punctuated = this.splitByPunctuation(trimmed);
-            if (punctuated.length > 1) {
-                lines = punctuated;
-            }
-        }
-
-        if (lines.length <= 1) {
-            const groupBox = blocks.reduce(
-                (acc, b) => ({
-                    x0: Math.min(acc.x0, b.bbox.x0),
-                    y0: Math.min(acc.y0, b.bbox.y0),
-                    x1: Math.max(acc.x1, b.bbox.x1),
-                    y1: Math.max(acc.y1, b.bbox.y1),
-                }),
-                { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
-            );
-            const avgHeight = blocks.reduce((sum, b) => sum + (b.bbox.y1 - b.bbox.y0), 0) / blocks.length;
-            const fontSize = Math.max(12, Math.min(avgHeight * 0.8, 48));
-            ctx.font = `bold ${Math.round(fontSize)}px ${fontFamily}`;
-            lines = this.wrapText(ctx, trimmed, Math.max(1, groupBox.x1 - groupBox.x0));
-        }
-
-        return this.balanceLines(lines, targetCount);
+    private computeMedianStats(blocks: TextBlock[]): { medianArea: number; medianHeight: number } {
+        if (!blocks.length) return { medianArea: 1, medianHeight: 1 };
+        const areas = blocks.map((b) => (b.bbox.x1 - b.bbox.x0) * (b.bbox.y1 - b.bbox.y0)).sort((a, b) => a - b);
+        const heights = blocks.map((b) => b.bbox.y1 - b.bbox.y0).sort((a, b) => a - b);
+        const mid = Math.floor(areas.length / 2);
+        const medianArea = areas[mid] || areas[0];
+        const medianHeight = heights[mid] || heights[0];
+        return { medianArea, medianHeight };
     }
 
-    private splitByPunctuation(text: string): string[] {
-        const parts: string[] = [];
-        let current = '';
-        const punctuation = '。！？!?.,，；;：:';
-
-        for (const ch of text) {
-            current += ch;
-            if (punctuation.includes(ch)) {
-                const value = current.trim();
-                if (value) parts.push(value);
-                current = '';
-            }
-        }
-        const tail = current.trim();
-        if (tail) parts.push(tail);
-        return parts;
-    }
-
-    private balanceLines(lines: string[], targetCount: number): string[] {
-        let result = lines.map((line) => line.trim()).filter(Boolean);
-        if (result.length === 0) result = [''];
-
-        while (result.length > targetCount) {
-            const tail = result.pop()!;
-            result[result.length - 1] = `${result[result.length - 1]} ${tail}`.trim();
-        }
-
-        let guard = 0;
-        while (result.length < targetCount && guard < 20) {
-            guard += 1;
-            let longestIndex = 0;
-            for (let i = 1; i < result.length; i++) {
-                if (result[i].length > result[longestIndex].length) {
-                    longestIndex = i;
-                }
-            }
-            const [a, b] = this.splitLineInHalf(result[longestIndex]);
-            result.splice(longestIndex, 1, a, b);
-            if (!b) break;
-        }
-
-        while (result.length < targetCount) {
-            result.push('');
-        }
-        return result;
-    }
-
-    private splitLineInHalf(line: string): [string, string] {
-        const trimmed = line.trim();
-        if (!trimmed) return ['', ''];
-        const mid = Math.floor(trimmed.length / 2);
-        const leftSpace = trimmed.lastIndexOf(' ', mid);
-        const rightSpace = trimmed.indexOf(' ', mid + 1);
-        let cut = mid;
-        if (leftSpace > 0) cut = leftSpace;
-        else if (rightSpace > 0) cut = rightSpace;
-
-        const first = trimmed.slice(0, cut).trim();
-        const second = trimmed.slice(cut).trim();
-        if (!first || !second) {
-            return [trimmed, ''];
-        }
-        return [first, second];
-    }
-
-    private wrapText(
-        ctx: CanvasRenderingContext2D,
-        text: string,
-        maxWidth: number
-    ): string[] {
-        const lines: string[] = [];
-        const chars = text.split('');
-        let currentLine = '';
-
-        for (const char of chars) {
-            const testLine = currentLine + char;
-            const metrics = ctx.measureText(testLine);
-
-            if (metrics.width > maxWidth && currentLine.length > 0) {
-                lines.push(currentLine);
-                currentLine = char;
-            } else {
-                currentLine = testLine;
-            }
-        }
-        if (currentLine) {
-            lines.push(currentLine);
-        }
-        return lines;
+    private estimateEdgeDensity(blocks: TextBlock[], block: TextBlock): number {
+        const width = block.bbox.x1 - block.bbox.x0;
+        const height = block.bbox.y1 - block.bbox.y0;
+        if (width <= 0 || height <= 0) return 0;
+        // 粗略估计：短词 + 高瘦比例视作高边缘密度
+        const aspect = Math.max(width / height, height / width);
+        if (aspect >= 2.8) return 0.25;
+        return 0.08;
     }
 
     // 暂停
@@ -602,44 +520,94 @@ export class TranslationController {
             }));
         }
 
+        const { medianArea, medianHeight } = this.computeMedianStats(blocks);
         const sorted = [...blocks].sort((a, b) => a.bbox.y0 - b.bbox.y0);
-        const groups: Array<{ bbox: TextBlock['bbox']; blocks: TextBlock[] }> = [];
+        const blockMeta = sorted.map((block) => {
+            const width = block.bbox.x1 - block.bbox.x0;
+            const height = block.bbox.y1 - block.bbox.y0;
+            const area = Math.max(1, width * height);
+            const text = block.text.trim();
+            const compact = text.replace(/\s+/g, '');
+            const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(text);
+            const isUpper = /^[A-Z]{2,6}$/.test(compact);
+            const isShort = compact.length <= (isCjk ? 2 : 4);
+            const aspect = width > 0 && height > 0 ? Math.max(width / height, height / width) : 1;
+            const isDecorativeLike =
+                (isShort && area > medianArea * 1.6 && (height > medianHeight * 1.4 || aspect >= 2.4)) ||
+                (isUpper && area > medianArea * 1.2);
+            return { width, height, area, isDecorativeLike };
+        });
+        const n = sorted.length;
+        const parent = Array.from({ length: n }, (_, i) => i);
 
-        const isClose = (g: { bbox: TextBlock['bbox'] }, b: TextBlock): boolean => {
-            const gb = g.bbox;
-            const bh = b.bbox.y1 - b.bbox.y0;
-            const gh = gb.y1 - gb.y0;
-
-            const vGap = Math.max(0, Math.max(gb.y0 - b.bbox.y1, b.bbox.y0 - gb.y1));
-            const hGap = Math.max(0, Math.max(gb.x0 - b.bbox.x1, b.bbox.x0 - gb.x1));
-
-            const maxH = Math.max(gh, bh);
-            const maxW = Math.max(gb.x1 - gb.x0, b.bbox.x1 - b.bbox.x0);
-
-            return vGap < maxH * 0.6 && hGap < maxW * 0.5;
+        const find = (x: number): number => {
+            if (parent[x] !== x) parent[x] = find(parent[x]);
+            return parent[x];
+        };
+        const union = (a: number, b: number): void => {
+            const ra = find(a);
+            const rb = find(b);
+            if (ra !== rb) parent[rb] = ra;
         };
 
-        for (const block of sorted) {
-            let merged = false;
-            for (const g of groups) {
-                if (isClose(g, block)) {
-                    g.blocks.push(block);
-                    g.bbox = {
-                        x0: Math.min(g.bbox.x0, block.bbox.x0),
-                        y0: Math.min(g.bbox.y0, block.bbox.y0),
-                        x1: Math.max(g.bbox.x1, block.bbox.x1),
-                        y1: Math.max(g.bbox.y1, block.bbox.y1),
-                    };
-                    merged = true;
-                    break;
-                }
+        const isClose = (a: TextBlock, b: TextBlock, metaA: { height: number; width: number; isDecorativeLike: boolean }, metaB: { height: number; width: number; isDecorativeLike: boolean }): boolean => {
+            const bh = metaB.height;
+            const ah = metaA.height;
+
+            const vGap = Math.max(0, Math.max(a.bbox.y0 - b.bbox.y1, b.bbox.y0 - a.bbox.y1));
+            const hGap = Math.max(0, Math.max(a.bbox.x0 - b.bbox.x1, b.bbox.x0 - a.bbox.x1));
+
+            const maxH = Math.max(ah, bh);
+            const maxW = Math.max(metaA.width, metaB.width);
+
+            const overlap = Math.max(0, Math.min(a.bbox.x1, b.bbox.x1) - Math.max(a.bbox.x0, b.bbox.x0));
+            const minW = Math.max(1, Math.min(metaA.width, metaB.width));
+            const overlapRatio = overlap / minW;
+
+            const isDecorPair = metaA.isDecorativeLike || metaB.isDecorativeLike;
+            if (metaA.isDecorativeLike !== metaB.isDecorativeLike) {
+                return false;
             }
-            if (!merged) {
-                groups.push({ bbox: { ...block.bbox }, blocks: [block] });
+
+            if (isDecorPair) {
+                const nearVertDecor = vGap < Math.min(maxH * 0.4, medianHeight * 0.6);
+                const nearHorizDecor = overlapRatio >= 0.5 || hGap < maxW * 0.2;
+                return nearVertDecor && nearHorizDecor;
+            }
+
+            const nearVert = vGap < Math.min(maxH * 0.7, medianHeight * 0.9);
+            const nearHoriz = overlapRatio >= 0.3 || hGap < maxW * 0.3;
+
+            return nearVert && nearHoriz;
+        };
+
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                if (isClose(sorted[i], sorted[j], blockMeta[i], blockMeta[j])) {
+                    union(i, j);
+                }
             }
         }
 
-        return groups.map((g) => {
+        const groupMap = new Map<number, { bbox: TextBlock['bbox']; blocks: TextBlock[] }>();
+        for (let i = 0; i < n; i++) {
+            const root = find(i);
+            const block = sorted[i];
+            const existing = groupMap.get(root);
+            if (!existing) {
+                groupMap.set(root, { bbox: { ...block.bbox }, blocks: [block] });
+            } else {
+                existing.blocks.push(block);
+                existing.bbox = {
+                    x0: Math.min(existing.bbox.x0, block.bbox.x0),
+                    y0: Math.min(existing.bbox.y0, block.bbox.y0),
+                    x1: Math.max(existing.bbox.x1, block.bbox.x1),
+                    y1: Math.max(existing.bbox.y1, block.bbox.y1),
+                };
+            }
+        }
+
+        return Array.from(groupMap.values()).map((g) => {
             const sortedBlocks = g.blocks.sort((a, b) => {
                 if (a.bbox.y0 === b.bbox.y0) return a.bbox.x0 - b.bbox.x0;
                 return a.bbox.y0 - b.bbox.y0;

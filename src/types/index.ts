@@ -16,7 +16,9 @@ export interface Settings {
     deeplApiKey: string;
     // 显示设置
     fontSize: number;
+    fontScale?: number;
     fontColor: string;
+    maskOpacity?: number;
     // OCR 设置
     ocrEngine: 'local' | 'cloud';
     cloudOcrKey: string;
@@ -43,6 +45,13 @@ export interface TextBlock {
     text: string;
     bbox: BBox;
     confidence: number;
+}
+
+// 渲染分组（用于擦除/渲染）
+export interface RenderGroup {
+    bbox: BBox;
+    text: string; // 译文
+    blocks: TextBlock[]; // 原始块（用于估算字号等）
 }
 
 // 边界框
