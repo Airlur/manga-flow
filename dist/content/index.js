@@ -3122,12 +3122,14 @@ ${numberedTexts}`;
       const analysis = [];
       for (const group of groups) {
         const maskBox = this.expandBox(group.bbox, canvas.width, canvas.height);
-        const stats = this.analyzeRegion(ctx, group.bbox);
+        const analysisBox = this.expandAnalysisBox(group.bbox, canvas.width, canvas.height);
+        const stats = this.analyzeRegion(ctx, analysisBox);
         const isBubble = this.isBubbleRegion(stats);
         const isComplex = this.isComplexRegion(stats);
-        const isShort = this.isShortLabel(group.text || "");
-        const isLightBubble = !isShort && isBubble && stats.edgeDensity <= 0.08 && stats.ringVariance <= 4500 && stats.dominantRatio >= 0.65 && stats.bubbleLuminance >= 210 && stats.ringLightRatio >= 0.6;
-        const renderMode = isLightBubble ? "erase" : "mask";
+        const sourceText = this.getGroupSourceText(group);
+        const isShort = this.isShortLabel(sourceText);
+        const isLightBubble = !isShort && isBubble && stats.edgeDensity <= 0.08 && stats.ringVariance <= 4500 && stats.dominantRatio >= 0.65 && stats.bubbleLuminance >= 205 && stats.ringLightRatio >= 0.55;
+        const renderMode = !isShort && isBubble && !isComplex ? "erase" : "mask";
         const info = {
           bbox: group.bbox,
           maskBox,
@@ -3160,6 +3162,20 @@ ${numberedTexts}`;
         Math.round(width * 0.08)
       );
       const padY = Math.max(4, Math.round(height * 0.25));
+      const x0 = Math.max(0, Math.floor(box.x0 - padX));
+      const y0 = Math.max(0, Math.floor(box.y0 - padY));
+      const x1 = Math.min(canvasWidth, Math.ceil(box.x1 + padX));
+      const y1 = Math.min(canvasHeight, Math.ceil(box.y1 + padY));
+      return { x0, y0, x1, y1 };
+    }
+    expandAnalysisBox(box, canvasWidth, canvasHeight) {
+      const width = box.x1 - box.x0;
+      const height = box.y1 - box.y0;
+      const padX = Math.min(
+        Math.max(4, Math.round(height * 0.35)),
+        Math.round(width * 0.06)
+      );
+      const padY = Math.max(3, Math.round(height * 0.18));
       const x0 = Math.max(0, Math.floor(box.x0 - padX));
       const y0 = Math.max(0, Math.floor(box.y0 - padY));
       const x1 = Math.min(canvasWidth, Math.ceil(box.x1 + padX));
@@ -3289,6 +3305,11 @@ ${numberedTexts}`;
       if (hasCjk && normalized.length <= 10) return true;
       if (hasLatin && normalized.length <= 14) return true;
       return false;
+    }
+    getGroupSourceText(group) {
+      var _a;
+      if (!((_a = group.blocks) == null ? void 0 : _a.length)) return "";
+      return group.blocks.map((block) => block.text).join(" ");
     }
     eraseRegion(ctx, box, info) {
       const width = Math.max(1, Math.floor(box.x1 - box.x0));
@@ -3420,17 +3441,16 @@ ${numberedTexts}`;
         const scaledBase = Math.max(minSize, Math.min(maxSize, baseFontSize * scale));
         const singleLine = this.isShortLabel(normalizedText);
         const layout = this.layoutText(ctx, normalizedText, width, height, fontFamily, scaledBase, singleLine, minSize, maxSize);
-        let mainColor = "#000000";
-        let strokeColor = "#FFFFFF";
-        if (stats == null ? void 0 : stats.isDark) {
+        const userColor = options.fontColor || "#000000";
+        let mainColor = userColor;
+        if ((stats == null ? void 0 : stats.isDark) && userColor === "#000000") {
           mainColor = "#FFFFFF";
-          strokeColor = "#000000";
-        } else if (options.fontColor && options.fontColor !== "#000000") {
-          mainColor = options.fontColor;
         }
-        if ((stats == null ? void 0 : stats.renderMode) === "mask" && !this.isShortLabel(normalizedText)) {
-          const baseAlpha = options.maskOpacity ?? (stats.isDark ? 0.36 : 0.24);
-          const alpha = stats.isDark ? Math.min(0.7, baseAlpha + 0.12) : baseAlpha;
+        const strokeColor = this.getContrastColor(mainColor);
+        if ((stats == null ? void 0 : stats.renderMode) === "mask") {
+          const hasUserOpacity = options.maskOpacity !== void 0;
+          const baseAlpha = hasUserOpacity ? options.maskOpacity : stats.isDark ? 0.36 : 0.24;
+          const alpha = stats.isDark && !hasUserOpacity ? Math.min(0.7, baseAlpha + 0.12) : baseAlpha;
           const fillStyle = stats.isDark ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
           ctx.fillStyle = fillStyle;
           ctx.fillRect(renderBox.x0, renderBox.y0, width, height);
@@ -3517,6 +3537,15 @@ ${numberedTexts}`;
       if (hasCjk && normalized.length <= 10) return true;
       if (hasLatin && normalized.length <= 14) return true;
       return false;
+    }
+    getContrastColor(hexColor) {
+      const hex = hexColor.replace("#", "").trim();
+      if (hex.length !== 6) return "#000000";
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+      return luminance >= 140 ? "#000000" : "#FFFFFF";
     }
   }
   var localforage$1 = { exports: {} };

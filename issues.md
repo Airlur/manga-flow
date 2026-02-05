@@ -80,6 +80,11 @@
   - 建议：继续完善“语义优先 + 组级擦除”的策略分流。
   - 影响文件：`src/content/core/image-processor.ts`, `src/content/core/renderer.ts`。
 
+- [ ] P1 设置面板显示设置未生效
+  - 现象：字体倍率/颜色/遮罩透明度调整后，渲染效果仍无明显变化。
+  - 备注：已尝试渲染端修正，实测仍未生效，需进一步定位设置保存/读取/渲染链路。
+  - 影响文件：`src/content/ui/settings-panel.ts`, `src/content/core/translation-controller.ts`, `src/content/core/renderer.ts`。
+
 - [ ] P1 组级渲染仍需验证字号/遮罩覆盖
   - 现象：字号与遮罩已改为组级，但需要验证不同气泡/背景下的稳定性。
   - 建议：统一以组 bbox 作为排版与遮罩基准，必要时加上最小/最大约束。

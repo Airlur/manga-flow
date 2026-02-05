@@ -47,19 +47,18 @@ export class Renderer {
             const layout = this.layoutText(ctx, normalizedText, width, height, fontFamily, scaledBase, singleLine, minSize, maxSize);
 
             // 颜色策略
-            let mainColor = '#000000';
-            let strokeColor = '#FFFFFF';
-            if (stats?.isDark) {
+            const userColor = options.fontColor || '#000000';
+            let mainColor = userColor;
+            if (stats?.isDark && userColor === '#000000') {
                 mainColor = '#FFFFFF';
-                strokeColor = '#000000';
-            } else if (options.fontColor && options.fontColor !== '#000000') {
-                mainColor = options.fontColor;
             }
+            const strokeColor = this.getContrastColor(mainColor);
 
             // 复杂背景遮罩
-            if (stats?.renderMode === 'mask' && !this.isShortLabel(normalizedText)) {
-                const baseAlpha = options.maskOpacity ?? (stats.isDark ? 0.36 : 0.24);
-                const alpha = stats.isDark ? Math.min(0.7, baseAlpha + 0.12) : baseAlpha;
+            if (stats?.renderMode === 'mask') {
+                const hasUserOpacity = options.maskOpacity !== undefined;
+                const baseAlpha = hasUserOpacity ? options.maskOpacity! : (stats.isDark ? 0.36 : 0.24);
+                const alpha = stats.isDark && !hasUserOpacity ? Math.min(0.7, baseAlpha + 0.12) : baseAlpha;
                 const fillStyle = stats.isDark
                     ? `rgba(0,0,0,${alpha})`
                     : `rgba(255,255,255,${alpha})`;
@@ -178,5 +177,15 @@ export class Renderer {
         if (hasCjk && normalized.length <= 10) return true;
         if (hasLatin && normalized.length <= 14) return true;
         return false;
+    }
+
+    private getContrastColor(hexColor: string): string {
+        const hex = hexColor.replace('#', '').trim();
+        if (hex.length !== 6) return '#000000';
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        return luminance >= 140 ? '#000000' : '#FFFFFF';
     }
 }

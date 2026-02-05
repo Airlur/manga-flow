@@ -62,18 +62,20 @@ export class ImageProcessor {
 
         for (const group of groups) {
             const maskBox = this.expandBox(group.bbox, canvas.width, canvas.height);
-            const stats = this.analyzeRegion(ctx, group.bbox);
+            const analysisBox = this.expandAnalysisBox(group.bbox, canvas.width, canvas.height);
+            const stats = this.analyzeRegion(ctx, analysisBox);
             const isBubble = this.isBubbleRegion(stats);
             const isComplex = this.isComplexRegion(stats);
-            const isShort = this.isShortLabel(group.text || '');
+            const sourceText = this.getGroupSourceText(group);
+            const isShort = this.isShortLabel(sourceText);
             const isLightBubble = !isShort && isBubble
                 && stats.edgeDensity <= 0.08
                 && stats.ringVariance <= 4500
                 && stats.dominantRatio >= 0.65
-                && stats.bubbleLuminance >= 210
-                && stats.ringLightRatio >= 0.6;
+                && stats.bubbleLuminance >= 205
+                && stats.ringLightRatio >= 0.55;
 
-            const renderMode: GroupAnalysis['renderMode'] = isLightBubble ? 'erase' : 'mask';
+            const renderMode: GroupAnalysis['renderMode'] = (!isShort && isBubble && !isComplex) ? 'erase' : 'mask';
 
             const info: GroupAnalysis = {
                 bbox: group.bbox,
@@ -111,6 +113,23 @@ export class ImageProcessor {
             Math.round(width * 0.08)
         );
         const padY = Math.max(4, Math.round(height * 0.25));
+
+        const x0 = Math.max(0, Math.floor(box.x0 - padX));
+        const y0 = Math.max(0, Math.floor(box.y0 - padY));
+        const x1 = Math.min(canvasWidth, Math.ceil(box.x1 + padX));
+        const y1 = Math.min(canvasHeight, Math.ceil(box.y1 + padY));
+
+        return { x0, y0, x1, y1 };
+    }
+
+    private expandAnalysisBox(box: BBox, canvasWidth: number, canvasHeight: number): BBox {
+        const width = box.x1 - box.x0;
+        const height = box.y1 - box.y0;
+        const padX = Math.min(
+            Math.max(4, Math.round(height * 0.35)),
+            Math.round(width * 0.06)
+        );
+        const padY = Math.max(3, Math.round(height * 0.18));
 
         const x0 = Math.max(0, Math.floor(box.x0 - padX));
         const y0 = Math.max(0, Math.floor(box.y0 - padY));
@@ -270,6 +289,11 @@ export class ImageProcessor {
         if (hasCjk && normalized.length <= 10) return true;
         if (hasLatin && normalized.length <= 14) return true;
         return false;
+    }
+
+    private getGroupSourceText(group: RenderGroup): string {
+        if (!group.blocks?.length) return '';
+        return group.blocks.map((block) => block.text).join(' ');
     }
 
     private eraseRegion(
