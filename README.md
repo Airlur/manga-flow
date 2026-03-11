@@ -1,125 +1,126 @@
 # MangaFlow 漫译
 
-一个面向漫画阅读场景的浏览器扩展，自动识别图片中的文本并翻译后回渲到原图，目标是减少跳出阅读和手工复制翻译的成本。
+面向韩漫/日漫网页阅读场景的浏览器扩展：识别图片文字、翻译并回渲到原图，减少切应用和手工复制翻译。
 
-## 核心能力
+## 功能概览
 
-- 面向漫画页的图片检测与懒加载监听
-- OCR 识别（本地 Tesseract + 云端 Google Vision）
-- 文本过滤与分组（对白优先、拟声词/装饰文本过滤）
-- 分组翻译（Google / OpenAI 兼容 / DeepLX / DeepL）
-- 组级擦除与渲染（遮罩、描边、字号自适应）
-- 调试可视化（ROI / OCR / Mask 多层框）
+- 漫画图片检测与懒加载监听
+- OCR（本地 `Tesseract.js` / 云端 `Google Cloud Vision`）
+- 文本过滤与分组翻译（按组翻译，按组擦除与渲染）
+- 渲染策略分流（擦除 / 遮罩 / 描边）
+- 调试可视化（ROI/OCR/Mask）
 
-## 渲染策略概览
+## 当前可用性（重要）
 
-1. OCR 文本块按几何关系聚类为组。
-2. 每个组进行背景复杂度与气泡特征分析。
-3. 决策分流：
-- 短文本：不擦除，仅遮罩/描边。
-- 气泡且非复杂背景：优先擦除后渲染。
-- 复杂背景：保守遮罩 + 强描边，避免脏块。
-
-## 技术栈
-
-- `TypeScript`
-- `Chrome Extension Manifest V3`
-- `Vite`
-- `Canvas API`
-- `Tesseract.js`
-- `LocalForage`
+| 模块 | 选项 | 是否可用 | 是否需要配置 | 备注 |
+|---|---|---|---|---|
+| OCR | `local` | 可用 | 否 | 默认选项，基于 `Tesseract.js` |
+| OCR | `cloud` | 可用 | 是（`cloudOcrKey`） | 未配置 Key 时会回退本地 OCR |
+| 翻译 | `google` | 可用 | 否 | 走 `translate.googleapis.com` 非官方接口，可能限流 |
+| 翻译 | `microsoft` | 部分可用 | 否 | 当前实现会回退到 Google，不是独立微软通道 |
+| 翻译 | `openai` | 可用 | 是（`apiBaseUrl` + `apiKey`） | 支持 OpenAI 兼容服务 |
+| 翻译 | `deeplx` | 可用 | 是（`deeplxUrl`） | 依赖你自己的 DeepLX 服务 |
+| 翻译 | `deepl` | 可用 | 是（`deeplApiKey`） | 调用 DeepL Free API |
 
 ## 快速开始
 
-### 环境要求
-
-- `Node.js >= 18`
-- `pnpm >= 9`
-
-### 安装依赖
+### 1) 安装与构建
 
 ```bash
 pnpm install
-```
-
-### 开发构建
-
-```bash
-pnpm dev
-```
-
-### 生产构建
-
-```bash
 pnpm build
 ```
 
-## 扩展加载方式
+### 2) 加载扩展
 
-1. 执行 `pnpm build`。
-2. 打开 Chrome/Edge 扩展管理页面，开启开发者模式。
-3. 选择“加载已解压的扩展程序”，指向项目根目录。
-4. 打开漫画站点后使用悬浮球开始翻译。
+1. 打开 Chrome/Edge 扩展管理页，开启开发者模式
+2. 选择“加载已解压的扩展程序”
+3. 选择本项目根目录
 
-## 常用脚本
+### 3) 首次配置（建议）
+
+1. 打开漫画站点页面
+2. 点悬浮球进入设置
+3. 选择 OCR 引擎：
+- `local`：直接可用
+- `cloud`：需填写 `Google Cloud Vision API Key`
+4. 选择翻译引擎：
+- `google`：开箱可用（不稳定时换 OpenAI/DeepL）
+- `openai`：填写 `API Base URL`、`API Key`、`Model`
+- `deeplx`：填写 `DeepLX URL`
+- `deepl`：填写 `DeepL API Key`
+5. 保存设置后开始翻译
+
+## 渲染策略（当前逻辑）
+
+1. OCR 块先分组（同气泡/同段落）
+2. 组级背景分析，判断气泡特征和复杂度
+3. 按组决策：
+- 短文本：不擦除，走遮罩/描边
+- 气泡且背景不复杂：优先擦除
+- 复杂背景：保守遮罩 + 强描边
+
+## 设置项说明
+
+- `sourceLang`：OCR 源语言（`ko/ja/en/auto`）
+- `targetLang`：目标语言（当前固定 `zh`）
+- `translateEngine`：翻译引擎选择
+- `ocrEngine`：`local` 或 `cloud`
+- `fontScale`：字体倍率（已接入，仍有页面生效一致性问题待优化）
+- `fontColor`：字体颜色（已接入，仍有页面生效一致性问题待优化）
+- `maskOpacity`：遮罩透明度（已接入，仍有页面生效一致性问题待优化）
+
+## 已知限制
+
+- `microsoft` 目前不是独立翻译实现，实际回退到 Google
+- Google 翻译通道基于非官方接口，存在波动和限流风险
+- 显示设置（字体倍率/颜色/遮罩透明度）在部分页面存在生效不稳定，详见 `issues.md`
+- 内容脚本匹配范围与构建产物路径仍有收敛空间（见 `issues.md`）
+
+## 调试模式
+
+- 阶段：`roi` / `ocr` / `translate` / `full`
+- 叠层开关：OCR 红框 / ROI 橙框 / Mask 绿框
+- 控制台可查看 OCR 块与翻译日志
+
+## 开发脚本
 
 ```bash
-pnpm dev         # 内容脚本+扩展资源监听构建
+pnpm dev         # 监听构建
 pnpm build       # 完整构建
 pnpm lint        # 代码检查
-pnpm type-check  # TS 类型检查
+pnpm type-check  # 类型检查
 ```
 
-## 项目结构
+## 目录结构
 
 ```text
 manga-flow/
 ├─ src/
-│  ├─ background/          # Service Worker
+│  ├─ background/
 │  ├─ content/
-│  │  ├─ core/             # OCR/翻译/图像处理/渲染核心流程
-│  │  ├─ ui/               # 悬浮球与设置面板
-│  │  └─ utils/            # 站点适配与文本过滤
-│  ├─ popup/               # 浏览器操作面板
+│  │  ├─ core/
+│  │  ├─ ui/
+│  │  └─ utils/
+│  ├─ popup/
 │  ├─ styles/
 │  └─ types/
-├─ docs/                   # PRD/TDD/结构文档
-├─ manifest.json
-└─ vite.config.ts
+├─ docs/
+├─ plan.md
+├─ task.md
+├─ issues.md
+└─ manifest.json
 ```
 
-## 关键配置项
+## 参考文档
 
-- `sourceLang`: OCR 源语言（`ko/ja/en/auto`）
-- `targetLang`: 目标语言（当前为 `zh`）
-- `translateEngine`: 翻译引擎选择
-- `ocrEngine`: `local` 或 `cloud` [❌暂不支持]
-- `fontScale`: 渲染字号倍率 [❌暂不支持]
-- `fontColor`: 译文颜色 [❌暂不支持]
-- `maskOpacity`: 遮罩透明度 [❌暂不支持]
+- `docs/PRD.md`
+- `docs/TDD.md`
+- `docs/PROJECT_STRUCTURE.md`
+- `plan.md`
+- `task.md`
+- `issues.md`
 
-## 调试能力
+## License
 
-- 开发模式阶段控制：`ROI`、`OCR`、`Translate`、`Full`
-- 框层开关：`OCR 红框`、`ROI 橙框`、`Mask 绿框`
-- 控制台输出 OCR 文本块、翻译结果与时序日志
-
-## 文档索引
-
-- [`docs/PRD.md`](docs/PRD.md)
-- [`docs/TDD.md`](docs/TDD.md)
-- [`docs/PROJECT_STRUCTURE.md`](docs/PROJECT_STRUCTURE.md)
-- [`plan.md`](plan.md)
-- [`task.md`](task.md)
-- [`issues.md`](issues.md)
-
-## 路线图
-
-- 气泡判定阈值与渲染一致性持续调优
-- 设置项渲染生效链路收敛
-- 更多站点适配与性能优化
-- 可选交互编辑能力（per-block）
-
-## 许可证
-
-MIT License
+MIT
