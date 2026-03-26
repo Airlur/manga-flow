@@ -170,6 +170,30 @@
       transform: translateY(0);
     }
 
+    .action-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .secondary-btn {
+      flex: 1;
+      padding: 11px 12px;
+      background: #fff;
+      color: #333;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .secondary-btn:hover {
+      background: #fafafa;
+      border-color: #d4d4d8;
+    }
+
     /* 设置入口 */
     .settings-link {
       display: flex;
@@ -179,9 +203,10 @@
       padding: 10px;
       color: #666;
       font-size: 13px;
-      text-decoration: none;
       cursor: pointer;
       transition: color 0.2s;
+      background: none;
+      border: none;
     }
 
     .settings-link:hover {
@@ -279,14 +304,18 @@
     <div class="tip" id="tip"></div>
 
     <!-- 翻译按钮 -->
-    <button class="translate-btn" id="translate-btn">开始翻译</button>
+      <button class="translate-btn" id="translate-btn">开始翻译</button>
+
+      <div class="action-row">
+        <button class="secondary-btn" id="restore-ball-btn">重新显示悬浮球</button>
+      </div>
 
     <!-- 分割线 -->
     <div class="divider"></div>
 
     <!-- 底部操作栏 -->
     <div class="footer-actions" style="display: flex; justify-content: space-between; align-items: center; padding: 0 4px;">
-      <a href="#" id="settings-link" class="settings-link" style="text-decoration: none;">⚙️ 更多设置</a>
+      <button id="settings-link" class="settings-link" type="button">更多设置</button>
       <button id="clear-cache-btn" style="background: none; border: none; color: #999; cursor: pointer; font-size: 12px; padding: 4px 8px;">清除缓存</button>
     </div>
   </div>

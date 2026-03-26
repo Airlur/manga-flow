@@ -31,6 +31,10 @@ export interface Settings {
     showOcrBoxes?: boolean;
     showRoiBoxes?: boolean;
     showMaskBoxes?: boolean;
+
+    // 站点运行策略
+    sitePolicy?: 'auto_detect' | 'whitelist_only' | 'always_show';
+    siteWhitelist?: string[];
 }
 
 // OCR 结果
@@ -83,6 +87,30 @@ export interface TranslationProgress {
     current: number;
     total: number;
     status: 'pending' | 'processing' | 'completed' | 'error';
+}
+
+// 阶段耗时
+export interface StageTimings {
+    roiMs: number;
+    ocrMs: number;
+    translateMs: number;
+    renderMs: number;
+    totalMs: number;
+}
+
+// 单张图片翻译结果
+export interface ImageTranslationResult {
+    originalSrc: string;
+    renderedSrc?: string;
+    rendered: boolean;
+    timings: StageTimings;
+}
+
+// 批量翻译结果
+export interface BatchTranslationResult {
+    success: number;
+    failed: number;
+    timings: StageTimings;
 }
 
 // 站点配置

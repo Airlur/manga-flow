@@ -1,182 +1,163 @@
 // 漫译 MangaFlow - Popup 页面逻辑
 
-interface Settings {
-    sourceLang?: string;
-    targetLang?: string;
-    translateEngine?: string;
-    apiBaseUrl?: string;
-    apiKey?: string;
-    model?: string;
-    deeplxUrl?: string;
-    deeplApiKey?: string;
-    fontSize?: number;
-    fontScale?: number;
-    fontColor?: string;
-    maskOpacity?: number;
-    ocrEngine?: string;
-    cloudOcrKey?: string;
-}
-
-// 翻译服务显示名称
-const engineNames: Record<string, string> = {
-    microsoft: '微软翻译（免费）',
-    google: 'Google 翻译（免费）',
-    openai: 'OpenAI 兼容 API',
-    deeplx: 'DeepLX',
-    deepl: 'DeepL',
-};
+import type { Settings } from '../types';
+import { normalizeSettings } from '../config/default-settings';
 
 document.addEventListener('DOMContentLoaded', async () => {
-    const sourceLangSelect = document.getElementById('source-lang') as HTMLSelectElement;
-    const targetLangSelect = document.getElementById('target-lang') as HTMLSelectElement;
-    const engineSelect = document.getElementById('translate-engine') as HTMLSelectElement;
-    const translateBtn = document.getElementById('translate-btn');
-    const settingsLink = document.getElementById('settings-link');
+    const sourceLangSelect = document.getElementById('source-lang') as HTMLSelectElement | null;
+    const targetLangSelect = document.getElementById('target-lang') as HTMLSelectElement | null;
+    const engineSelect = document.getElementById('translate-engine') as HTMLSelectElement | null;
+    const translateBtn = document.getElementById('translate-btn') as HTMLButtonElement | null;
+    const restoreBallBtn = document.getElementById('restore-ball-btn') as HTMLButtonElement | null;
+    const settingsLink = document.getElementById('settings-link') as HTMLButtonElement | null;
+    const clearCacheBtn = document.getElementById('clear-cache-btn') as HTMLButtonElement | null;
     const tip = document.getElementById('tip');
     const status = document.getElementById('status');
 
-    // 加载设置
     const result = await chrome.storage.local.get('settings');
-    let settings = (result.settings || {}) as Settings;
+    let settings = normalizeSettings(result.settings as Partial<Settings> | undefined);
 
-    console.log('[MangaFlow Popup] 加载设置:', settings);
-
-    // 如果没有设置，使用默认值
-    if (!settings.translateEngine) {
-        settings = {
-            sourceLang: 'ko',
-            targetLang: 'zh',
-            translateEngine: 'google',
-            fontSize: 14,
-            fontScale: 1.0,
-            fontColor: '#000000',
-            maskOpacity: 0.24,
-            ocrEngine: 'local',
-        };
+    if (!result.settings) {
         await chrome.storage.local.set({ settings });
     }
 
-    // 填充设置值
-    if (sourceLangSelect && settings.sourceLang) {
-        sourceLangSelect.value = settings.sourceLang;
-    }
-    if (targetLangSelect && settings.targetLang) {
-        targetLangSelect.value = settings.targetLang;
-    }
-    if (engineSelect && settings.translateEngine) {
-        engineSelect.value = settings.translateEngine;
-    }
+    if (sourceLangSelect) sourceLangSelect.value = settings.sourceLang;
+    if (targetLangSelect) targetLangSelect.value = settings.targetLang;
+    if (engineSelect) engineSelect.value = settings.translateEngine;
 
-    // 语言变化保存（保留其他设置）
     sourceLangSelect?.addEventListener('change', async () => {
-        const currentResult = await chrome.storage.local.get('settings');
-        const currentSettings = (currentResult.settings || {}) as Settings;
-        currentSettings.sourceLang = sourceLangSelect.value;
-        await chrome.storage.local.set({ settings: currentSettings });
-        console.log('[MangaFlow Popup] 保存原文语言:', sourceLangSelect.value);
+        settings = await savePartialSettings({ sourceLang: sourceLangSelect.value as Settings['sourceLang'] });
     });
 
     targetLangSelect?.addEventListener('change', async () => {
-        const currentResult = await chrome.storage.local.get('settings');
-        const currentSettings = (currentResult.settings || {}) as Settings;
-        currentSettings.targetLang = targetLangSelect.value;
-        await chrome.storage.local.set({ settings: currentSettings });
-        console.log('[MangaFlow Popup] 保存目标语言:', targetLangSelect.value);
+        settings = await savePartialSettings({ targetLang: targetLangSelect.value as Settings['targetLang'] });
     });
 
-    // 翻译引擎变化保存
     engineSelect?.addEventListener('change', async () => {
-        const currentResult = await chrome.storage.local.get('settings');
-        const currentSettings = (currentResult.settings || {}) as Settings;
-        currentSettings.translateEngine = engineSelect.value;
-        await chrome.storage.local.set({ settings: currentSettings });
-        console.log('[MangaFlow Popup] 保存翻译引擎:', engineSelect.value);
+        settings = await savePartialSettings({ translateEngine: engineSelect.value as Settings['translateEngine'] });
     });
 
-    // 开始翻译按钮
     translateBtn?.addEventListener('click', async () => {
-        console.log('[MangaFlow Popup] 点击开始翻译');
-
         try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            console.log('[MangaFlow Popup] 当前标签页:', tab?.url);
-
-            // 检查是否是有效页面
-            if (!tab?.id || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:')) {
+            const tab = await getActiveTab();
+            if (!tab?.id) {
                 showTip('请先打开漫画网站再使用');
                 return;
             }
 
             showStatus('正在启动翻译...');
-
-            // 发送消息到内容脚本
             const response = await chrome.tabs.sendMessage(tab.id, { type: 'START_TRANSLATION' });
-            console.log('[MangaFlow Popup] 收到响应:', response);
 
             if (response?.success) {
                 window.close();
+                return;
             }
+
+            showTip(response?.error || '启动翻译失败');
         } catch (error) {
-            console.error('[MangaFlow Popup] 发送消息失败:', error);
+            console.error('[MangaFlow Popup] 启动翻译失败:', error);
             showTip('请先刷新页面后再使用');
         }
     });
 
-    // 更多设置
-    settingsLink?.addEventListener('click', async () => {
-        console.log('[MangaFlow Popup] 点击更多设置');
-
+    restoreBallBtn?.addEventListener('click', async () => {
         try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tab = await getActiveTab();
+            if (!tab?.id) {
+                showTip('请先打开漫画网站再使用');
+                return;
+            }
 
-            // 检查是否是有效页面
-            if (!tab?.id || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:')) {
+            showStatus('正在恢复悬浮球...');
+            const response = await chrome.tabs.sendMessage(tab.id, { type: 'RESTORE_FLOATING_BALL' });
+
+            if (response?.success) {
+                window.close();
+                return;
+            }
+
+            if (response?.qualified === false) {
+                showTip('当前页面未识别为漫画页，暂不显示悬浮球');
+                return;
+            }
+
+            showTip('恢复悬浮球失败，请先刷新页面');
+        } catch (error) {
+            console.error('[MangaFlow Popup] 恢复悬浮球失败:', error);
+            showTip('请先刷新页面后再使用');
+        }
+    });
+
+    settingsLink?.addEventListener('click', async () => {
+        try {
+            const tab = await getActiveTab();
+            if (!tab?.id) {
                 showTip('请先打开漫画网站再使用');
                 return;
             }
 
             const response = await chrome.tabs.sendMessage(tab.id, { type: 'OPEN_SETTINGS' });
-            console.log('[MangaFlow Popup] 设置响应:', response);
-
             if (response?.success) {
                 window.close();
+                return;
             }
+
+            showTip('打开设置失败');
         } catch (error) {
-            console.error('[MangaFlow Popup] 发送消息失败:', error);
+            console.error('[MangaFlow Popup] 打开设置失败:', error);
             showTip('请先刷新页面后再使用');
         }
     });
 
-    // 清除缓存按钮（清除 OCR + 翻译缓存，不影响设置和 API Key）
-    const clearCacheBtn = document.getElementById('clear-cache-btn');
     clearCacheBtn?.addEventListener('click', async () => {
-        if (!confirm('确定要清除所有 OCR/翻译缓存吗？（不会影响您的设置和 API Key）')) return;
+        if (!confirm('确定要清除所有 OCR/翻译缓存吗？（不会影响当前设置）')) return;
 
         try {
-            showStatus('正在清除缓存...');
-
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tab?.id || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:')) {
+            const tab = await getActiveTab();
+            if (!tab?.id) {
                 showTip('请先打开漫画页面再清除缓存');
                 return;
             }
 
+            showStatus('正在清除缓存...');
             const response = await chrome.tabs.sendMessage(tab.id, { type: 'CLEAR_CACHE' });
+
             if (!response?.success) {
                 throw new Error(response?.error || '清除失败');
             }
 
-            showStatus('✅ OCR/翻译缓存已清除！');
-            setTimeout(() => window.close(), 1500);
+            showStatus('OCR / 翻译缓存已清除');
+            setTimeout(() => window.close(), 1200);
         } catch (error) {
-            console.error('[MangaFlow] 清除缓存失败:', error);
-            showTip('清除失败');
+            console.error('[MangaFlow Popup] 清除缓存失败:', error);
+            showTip('清除缓存失败');
         }
     });
 
-    function showTip(message: string) {
+    async function savePartialSettings(partial: Partial<Settings>): Promise<Settings> {
+        const currentResult = await chrome.storage.local.get('settings');
+        const merged = normalizeSettings({
+            ...(currentResult.settings as Partial<Settings> | undefined),
+            ...partial,
+        });
+        await chrome.storage.local.set({ settings: merged });
+        return merged;
+    }
+
+    async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.url) return undefined;
+
+        const invalidUrl = tab.url.startsWith('chrome://')
+            || tab.url.startsWith('edge://')
+            || tab.url.startsWith('about:');
+
+        return invalidUrl ? undefined : tab;
+    }
+
+    function showTip(message: string): void {
         if (tip) {
-            tip.textContent = '⚠️ ' + message;
+            tip.textContent = message;
             tip.classList.add('show');
         }
         if (status) {
@@ -184,7 +165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    function showStatus(message: string) {
+    function showStatus(message: string): void {
         if (status) {
             status.textContent = message;
             status.classList.add('show');

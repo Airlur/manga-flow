@@ -201,8 +201,8 @@ ${numberedTexts}`;
      * 解析编号格式的翻译结果
      */
     private parseNumberedTranslations(content: string, expectedCount: number): string[] {
-        const defaultValue = '[翻译失败]' as string;
-        const results: string[] = Array.from({ length: expectedCount }, () => defaultValue);
+        const defaultValue: string = '[翻译失败]';
+        const results = new Array<string>(expectedCount).fill(defaultValue);
 
         // 匹配 [1] xxx 格式
         const regex = /\[(\d+)\]\s*(.+?)(?=\[\d+\]|$)/gs;
@@ -218,8 +218,8 @@ ${numberedTexts}`;
 
         // 如果正则解析失败，尝试按行分割
         const FAIL_MARKER = '[翻译失败]';
-        const allFailed = results.every(r => r === FAIL_MARKER);
-        if (allFailed) {
+        const hasParsedTranslation = results.some(r => r !== FAIL_MARKER);
+        if (!hasParsedTranslation) {
             const lines = content.split('\n').filter(l => l.trim());
             for (let i = 0; i < Math.min(lines.length, expectedCount); i++) {
                 // 移除可能的编号前缀

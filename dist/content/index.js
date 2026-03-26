@@ -4,61 +4,178 @@
     constructor(options) {
       this.element = null;
       this.progressText = null;
+      this.timerText = null;
       this.mainBtn = null;
+      this.settingsBtn = null;
+      this.toggleBtn = null;
+      this.disableMenu = null;
       this.state = "idle";
       this.isDragging = false;
-      this.dragOffset = { x: 0, y: 0 };
-      this.dragStartTime = 0;
+      this.dragStartY = 0;
+      this.dragOffsetY = 0;
+      this.ballOffsetY = 120;
+      this.hasTranslationResult = false;
+      this.viewMode = "translated";
+      this.disableMenuOpen = false;
+      this.ignoreClickUntil = 0;
+      this.handleMouseDown = (event) => {
+        this.beginDrag(event.clientY, event.target);
+      };
+      this.handleTouchStart = (event) => {
+        this.beginDrag(event.touches[0].clientY, event.target);
+      };
+      this.handleMouseMove = (event) => {
+        this.handleDragMove(event.clientY);
+      };
+      this.handleTouchMove = (event) => {
+        this.handleDragMove(event.touches[0].clientY);
+      };
+      this.handleDragEnd = () => {
+        if (this.isDragging) {
+          this.ignoreClickUntil = Date.now() + 180;
+        }
+        this.isDragging = false;
+        this.dragStartY = 0;
+        this.dragOffsetY = 0;
+      };
+      this.handleDocumentClick = (event) => {
+        if (!this.element) return;
+        const target = event.target;
+        if (target && this.element.contains(target)) return;
+        this.closeDisableMenu();
+      };
+      this.handleResize = () => {
+        this.ballOffsetY = this.clampOffset(this.ballOffsetY);
+        this.applyBallOffset();
+      };
       this.options = options;
     }
     mount() {
       this.createElement();
       this.bindEvents();
+      this.applyBallOffset();
+      this.setVisible(false);
+      this.setHasTranslationResult(false);
+      this.setViewMode("translated");
     }
     createElement() {
       const iconUrl = chrome.runtime.getURL("icons/icon48.png");
       this.element = document.createElement("div");
       this.element.id = "manga-flow-ball";
-      this.element.className = "manga-flow-ball";
+      this.element.className = "manga-flow-ball manga-flow-ball--idle";
       this.element.innerHTML = `
-            <div class="manga-flow-ball__container">
-                <button class="manga-flow-ball__main" title="点击开始翻译">
-                    <img class="manga-flow-ball__icon" src="${iconUrl}" alt="MangaFlow" />
-                    <div class="manga-flow-ball__spinner"></div>
-                </button>
-                <button class="manga-flow-ball__settings" title="设置">
+            <div class="manga-flow-ball__timer" aria-live="polite"></div>
+            <div class="manga-flow-ball__shell">
+                <button class="manga-flow-ball__close" type="button" title="关闭悬浮球" aria-label="关闭悬浮球">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="6" cy="12" r="1.5"/>
-                        <circle cx="12" cy="12" r="1.5"/>
-                        <circle cx="18" cy="12" r="1.5"/>
+                        <path d="M18 6L6 18" />
+                        <path d="M6 6L18 18" />
                     </svg>
                 </button>
+
+                <div class="manga-flow-ball__disable-menu">
+                    <button class="manga-flow-ball__disable-item" type="button" data-action="site">禁用此网站</button>
+                    <button class="manga-flow-ball__disable-item" type="button" data-action="global">全局禁用</button>
+                </div>
+
+                <div class="manga-flow-ball__container">
+                    <button class="manga-flow-ball__main" type="button" title="开始翻译" aria-label="开始翻译">
+                        <span class="manga-flow-ball__main-circle">
+                            <img class="manga-flow-ball__icon" src="${iconUrl}" alt="MangaFlow" />
+                            <span class="manga-flow-ball__spinner"></span>
+                        </span>
+                    </button>
+                    <button class="manga-flow-ball__settings" type="button" title="打开设置" aria-label="打开设置">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <circle cx="12" cy="5" r="1.8" />
+                            <circle cx="12" cy="12" r="1.8" />
+                            <circle cx="12" cy="19" r="1.8" />
+                        </svg>
+                    </button>
+                    <button class="manga-flow-ball__toggle" type="button" title="切换原文/译文" aria-label="切换原文/译文">
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M12.87 15.07 11 13.2l.07-.19a14.1 14.1 0 0 0 2.61-4.02h2.18V7h-5V5H8.86v2H4v1.99h7.17a11.4 11.4 0 0 1-2.25 4.01 9.75 9.75 0 0 1-1.69-2.27H5.24a12.55 12.55 0 0 0 2.47 3.34L3.96 18l1.41 1.41 3.75-3.75 2.33 2.33 1.42-1.51ZM18.5 10h-2L12 22h2l1.12-3h4.76L21 22h2l-4.5-12Zm-2.25 7 1.25-3.34L18.75 17h-2.5Z" />
+                        </svg>
+                    </button>
+                </div>
             </div>
-            <div class="manga-flow-ball__progress"></div>
+            <div class="manga-flow-ball__progress" aria-live="polite"></div>
         `;
       this.progressText = this.element.querySelector(".manga-flow-ball__progress");
+      this.timerText = this.element.querySelector(".manga-flow-ball__timer");
       this.mainBtn = this.element.querySelector(".manga-flow-ball__main");
+      this.settingsBtn = this.element.querySelector(".manga-flow-ball__settings");
+      this.toggleBtn = this.element.querySelector(".manga-flow-ball__toggle");
+      this.disableMenu = this.element.querySelector(".manga-flow-ball__disable-menu");
       document.body.appendChild(this.element);
     }
     bindEvents() {
+      var _a, _b, _c, _d, _e, _f, _g;
       if (!this.element) return;
-      const mainBtn = this.element.querySelector(".manga-flow-ball__main");
-      const settingsBtn = this.element.querySelector(".manga-flow-ball__settings");
-      mainBtn == null ? void 0 : mainBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (this.isDragging) return;
+      (_a = this.mainBtn) == null ? void 0 : _a.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (this.shouldIgnoreClick()) return;
+        this.closeDisableMenu();
         this.handleMainClick();
       });
-      settingsBtn == null ? void 0 : settingsBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
+      (_b = this.settingsBtn) == null ? void 0 : _b.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (this.shouldIgnoreClick()) return;
+        this.closeDisableMenu();
         this.options.onSettings();
       });
-      this.element.addEventListener("mousedown", this.handleDragStart.bind(this));
-      document.addEventListener("mousemove", this.handleDragMove.bind(this));
-      document.addEventListener("mouseup", this.handleDragEnd.bind(this));
-      this.element.addEventListener("touchstart", this.handleTouchStart.bind(this), { passive: true });
-      document.addEventListener("touchmove", this.handleTouchMove.bind(this), { passive: true });
-      document.addEventListener("touchend", this.handleDragEnd.bind(this));
+      (_c = this.toggleBtn) == null ? void 0 : _c.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (this.shouldIgnoreClick() || !this.hasTranslationResult) return;
+        this.closeDisableMenu();
+        this.options.onToggleView();
+      });
+      const closeBtn = this.element.querySelector(".manga-flow-ball__close");
+      closeBtn == null ? void 0 : closeBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (this.shouldIgnoreClick()) return;
+        this.toggleDisableMenu();
+      });
+      (_e = (_d = this.disableMenu) == null ? void 0 : _d.querySelector('[data-action="site"]')) == null ? void 0 : _e.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.closeDisableMenu();
+        this.options.onDisableSite();
+      });
+      (_g = (_f = this.disableMenu) == null ? void 0 : _f.querySelector('[data-action="global"]')) == null ? void 0 : _g.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.closeDisableMenu();
+        this.options.onDisableGlobal();
+      });
+      this.element.addEventListener("mousedown", this.handleMouseDown);
+      this.element.addEventListener("touchstart", this.handleTouchStart, { passive: true });
+      document.addEventListener("mousemove", this.handleMouseMove);
+      document.addEventListener("mouseup", this.handleDragEnd);
+      document.addEventListener("touchmove", this.handleTouchMove, { passive: true });
+      document.addEventListener("touchend", this.handleDragEnd);
+      document.addEventListener("click", this.handleDocumentClick);
+      window.addEventListener("resize", this.handleResize);
+    }
+    beginDrag(clientY, target) {
+      if (!this.element) return;
+      const interactiveTarget = target == null ? void 0 : target.closest("button");
+      if ((interactiveTarget == null ? void 0 : interactiveTarget.classList.contains("manga-flow-ball__close")) || (interactiveTarget == null ? void 0 : interactiveTarget.classList.contains("manga-flow-ball__disable-item"))) {
+        this.dragStartY = 0;
+        return;
+      }
+      this.dragStartY = clientY;
+      this.dragOffsetY = this.element.getBoundingClientRect().top;
+      this.isDragging = false;
+    }
+    handleDragMove(clientY) {
+      if (!this.element || this.dragStartY === 0) return;
+      const deltaY = clientY - this.dragStartY;
+      if (!this.isDragging && Math.abs(deltaY) >= 6) {
+        this.isDragging = true;
+        this.closeDisableMenu();
+      }
+      if (!this.isDragging) return;
+      this.ballOffsetY = this.clampOffset(this.dragOffsetY + deltaY);
+      this.applyBallOffset();
     }
     handleMainClick() {
       switch (this.state) {
@@ -75,59 +192,50 @@
           break;
       }
     }
-    handleDragStart(e) {
-      var _a, _b;
-      if (e.target.closest(".manga-flow-ball__settings")) return;
-      this.dragStartTime = Date.now();
-      this.isDragging = false;
-      this.dragOffset = {
-        x: e.clientX - (((_a = this.element) == null ? void 0 : _a.offsetLeft) || 0),
-        y: e.clientY - (((_b = this.element) == null ? void 0 : _b.offsetTop) || 0)
-      };
+    shouldIgnoreClick() {
+      return Date.now() < this.ignoreClickUntil;
     }
-    handleDragMove(e) {
-      if (this.dragOffset.x === 0 && this.dragOffset.y === 0) return;
-      if (!this.isDragging && Date.now() - this.dragStartTime > 150) {
-        this.isDragging = true;
-      }
-      if (this.element && this.isDragging) {
-        this.element.style.left = `${e.clientX - this.dragOffset.x}px`;
-        this.element.style.top = `${e.clientY - this.dragOffset.y}px`;
-        this.element.style.right = "auto";
-        this.element.style.bottom = "auto";
+    toggleDisableMenu() {
+      var _a;
+      this.disableMenuOpen = !this.disableMenuOpen;
+      (_a = this.element) == null ? void 0 : _a.classList.toggle("manga-flow-ball--disable-open", this.disableMenuOpen);
+    }
+    closeDisableMenu() {
+      var _a;
+      if (!this.disableMenuOpen) return;
+      this.disableMenuOpen = false;
+      (_a = this.element) == null ? void 0 : _a.classList.remove("manga-flow-ball--disable-open");
+    }
+    applyBallOffset() {
+      if (!this.element) return;
+      this.element.style.top = `${this.clampOffset(this.ballOffsetY)}px`;
+    }
+    clampOffset(offsetY) {
+      var _a, _b, _c, _d;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+      const shellHeight = ((_b = (_a = this.element) == null ? void 0 : _a.querySelector(".manga-flow-ball__shell")) == null ? void 0 : _b.getBoundingClientRect().height) || 46;
+      const timerHeight = ((_c = this.timerText) == null ? void 0 : _c.textContent) ? 30 : 0;
+      const progressHeight = ((_d = this.progressText) == null ? void 0 : _d.textContent) ? 30 : 0;
+      const minTop = 16 + timerHeight;
+      const maxTop = Math.max(minTop, viewportHeight - shellHeight - progressHeight - 18);
+      return Math.max(minTop, Math.min(offsetY, maxTop));
+    }
+    setVisible(visible) {
+      if (!this.element) return;
+      this.element.classList.toggle("manga-flow-ball--visible", visible);
+      if (!visible) {
+        this.closeDisableMenu();
       }
     }
-    handleDragEnd() {
-      setTimeout(() => {
-        this.isDragging = false;
-      }, 100);
-      this.dragOffset = { x: 0, y: 0 };
+    show() {
+      this.setVisible(true);
     }
-    handleTouchStart(e) {
-      var _a, _b;
-      const touch = e.touches[0];
-      this.dragStartTime = Date.now();
-      this.dragOffset = {
-        x: touch.clientX - (((_a = this.element) == null ? void 0 : _a.offsetLeft) || 0),
-        y: touch.clientY - (((_b = this.element) == null ? void 0 : _b.offsetTop) || 0)
-      };
-    }
-    handleTouchMove(e) {
-      if (this.dragOffset.x === 0 && this.dragOffset.y === 0) return;
-      const touch = e.touches[0];
-      if (!this.isDragging && Date.now() - this.dragStartTime > 150) {
-        this.isDragging = true;
-      }
-      if (this.element && this.isDragging) {
-        this.element.style.left = `${touch.clientX - this.dragOffset.x}px`;
-        this.element.style.top = `${touch.clientY - this.dragOffset.y}px`;
-        this.element.style.right = "auto";
-        this.element.style.bottom = "auto";
-      }
+    hide() {
+      this.setVisible(false);
     }
     setState(state) {
       this.state = state;
-      if (!this.element) return;
+      if (!this.element || !this.mainBtn) return;
       this.element.classList.remove(
         "manga-flow-ball--idle",
         "manga-flow-ball--translating",
@@ -136,20 +244,67 @@
         "manga-flow-ball--error"
       );
       this.element.classList.add(`manga-flow-ball--${state}`);
+      const titleMap = {
+        idle: "开始翻译",
+        translating: "暂停翻译",
+        paused: "继续翻译",
+        completed: "重新翻译",
+        error: "重新尝试翻译"
+      };
+      this.mainBtn.title = titleMap[state];
+      this.mainBtn.setAttribute("aria-label", titleMap[state]);
+    }
+    setElapsedTime(elapsedMs) {
+      if (!this.timerText) return;
+      if (elapsedMs === null) {
+        this.timerText.textContent = "";
+        this.timerText.style.display = "none";
+      } else {
+        this.timerText.textContent = `${Math.max(0, elapsedMs / 1e3).toFixed(1)}s`;
+        this.timerText.style.display = "inline-flex";
+      }
+      this.ballOffsetY = this.clampOffset(this.ballOffsetY);
+      this.applyBallOffset();
     }
     updateProgress(current, total) {
-      if (this.progressText) {
-        this.progressText.textContent = `${current}/${total}`;
-        this.progressText.style.display = "block";
-      }
+      if (!this.progressText) return;
+      this.progressText.textContent = `${current}/${total}`;
+      this.progressText.style.display = "inline-flex";
+      this.ballOffsetY = this.clampOffset(this.ballOffsetY);
+      this.applyBallOffset();
     }
     hideProgress() {
-      if (this.progressText) {
-        this.progressText.style.display = "none";
+      if (!this.progressText) return;
+      this.progressText.textContent = "";
+      this.progressText.style.display = "none";
+      this.ballOffsetY = this.clampOffset(this.ballOffsetY);
+      this.applyBallOffset();
+    }
+    setHasTranslationResult(hasResult) {
+      this.hasTranslationResult = hasResult;
+      if (!this.element || !this.toggleBtn) return;
+      this.element.classList.toggle("manga-flow-ball--has-toggle", hasResult);
+      this.toggleBtn.disabled = !hasResult;
+      if (!hasResult) {
+        this.closeDisableMenu();
       }
+    }
+    setViewMode(viewMode) {
+      this.viewMode = viewMode;
+      if (!this.element || !this.toggleBtn) return;
+      this.element.classList.toggle("manga-flow-ball--view-original", viewMode === "original");
+      const label = viewMode === "translated" ? "显示原图" : "显示译图";
+      this.toggleBtn.title = label;
+      this.toggleBtn.setAttribute("aria-label", label);
     }
     unmount() {
       var _a;
+      document.removeEventListener("mousemove", this.handleMouseMove);
+      document.removeEventListener("mouseup", this.handleDragEnd);
+      document.removeEventListener("touchmove", this.handleTouchMove);
+      document.removeEventListener("touchend", this.handleDragEnd);
+      document.removeEventListener("click", this.handleDocumentClick);
+      window.removeEventListener("resize", this.handleResize);
       (_a = this.element) == null ? void 0 : _a.remove();
     }
   }
@@ -775,6 +930,7 @@
       this.intersectionObserver = null;
       this.processedImages = /* @__PURE__ */ new Set();
       this.onNewImage = null;
+      this.onComicImageDetected = null;
       this.siteConfig = getSiteConfig(window.location.href);
       this.init();
     }
@@ -853,7 +1009,7 @@
     }
     // 检查单个图片是否为漫画图片
     checkImage(img) {
-      var _a;
+      var _a, _b;
       const src2 = this.getImageRealSrc(img);
       if (!src2 || this.processedImages.has(src2)) return;
       if (img.src && !img.complete) {
@@ -863,7 +1019,8 @@
       if (this.isComicImage(img)) {
         console.log("[MangaFlow] ✓ 识别为漫画图片:", src2.substring(src2.lastIndexOf("/") + 1));
         this.processedImages.add(src2);
-        (_a = this.intersectionObserver) == null ? void 0 : _a.observe(img);
+        (_a = this.onComicImageDetected) == null ? void 0 : _a.call(this, img);
+        (_b = this.intersectionObserver) == null ? void 0 : _b.observe(img);
       }
     }
     // 判断是否为漫画图片
@@ -926,6 +1083,10 @@
     // 设置新图片回调
     setOnNewImage(callback) {
       this.onNewImage = callback;
+    }
+    // 设置漫画图片检测回调（用于悬浮球显示策略）
+    setOnComicImageDetected(callback) {
+      this.onComicImageDetected = callback;
     }
     // 销毁
     destroy() {
@@ -2942,7 +3103,7 @@ ${numberedTexts}`;
      */
     parseNumberedTranslations(content, expectedCount) {
       const defaultValue = "[翻译失败]";
-      const results = Array.from({ length: expectedCount }, () => defaultValue);
+      const results = new Array(expectedCount).fill(defaultValue);
       const regex = /\[(\d+)\]\s*(.+?)(?=\[\d+\]|$)/gs;
       let match;
       while ((match = regex.exec(content)) !== null) {
@@ -2953,8 +3114,8 @@ ${numberedTexts}`;
         }
       }
       const FAIL_MARKER = "[翻译失败]";
-      const allFailed = results.every((r) => r === FAIL_MARKER);
-      if (allFailed) {
+      const hasParsedTranslation = results.some((r) => r !== FAIL_MARKER);
+      if (!hasParsedTranslation) {
         const lines = content.split("\n").filter((l) => l.trim());
         for (let i = 0; i < Math.min(lines.length, expectedCount); i++) {
           results[i] = lines[i].replace(/^\[\d+\]\s*/, "").trim();
@@ -6163,6 +6324,7 @@ ${numberedTexts}`;
     constructor() {
       this.isPaused = false;
       this.settings = null;
+      this.onImageTranslated = null;
       this.ocrEngine = new OCREngine();
       this.translator = new Translator();
       this.imageProcessor = new ImageProcessor();
@@ -6172,6 +6334,9 @@ ${numberedTexts}`;
       this.textDetector = new TextDetector();
       this.debugOverlay = DebugOverlayManager.getInstance();
     }
+    setOnImageTranslated(callback) {
+      this.onImageTranslated = callback;
+    }
     // 批量翻译图片
     async translateImages(images, onProgress) {
       var _a, _b;
@@ -6180,27 +6345,42 @@ ${numberedTexts}`;
       if (((_a = this.settings) == null ? void 0 : _a.ocrEngine) !== "cloud") {
         await this.ocrEngine.initLocal(((_b = this.settings) == null ? void 0 : _b.sourceLang) || "ko");
       }
+      const batchStartTime = Date.now();
       const total = images.length;
       const batchSize = 3;
       let successCount = 0;
       let failedCount = 0;
+      const aggregatedTimings = {
+        roiMs: 0,
+        ocrMs: 0,
+        translateMs: 0,
+        renderMs: 0,
+        totalMs: 0
+      };
       for (let i = 0; i < images.length; i += batchSize) {
         if (this.isPaused) break;
         const batch = images.slice(i, i + batchSize);
         const results = await Promise.allSettled(
           batch.map(async (img, batchIndex) => {
             const index = i + batchIndex;
-            await this.translateSingleImage(img);
+            const result = await this.translateSingleImage(img);
             onProgress == null ? void 0 : onProgress({
               current: index + 1,
               total,
               status: "processing"
             });
+            return result;
           })
         );
         for (const result of results) {
           if (result.status === "fulfilled") {
             successCount++;
+            if (result.value) {
+              aggregatedTimings.roiMs += result.value.timings.roiMs;
+              aggregatedTimings.ocrMs += result.value.timings.ocrMs;
+              aggregatedTimings.translateMs += result.value.timings.translateMs;
+              aggregatedTimings.renderMs += result.value.timings.renderMs;
+            }
           } else {
             failedCount++;
             console.error("[MangaFlow] 图片翻译失败:", result.reason);
@@ -6212,18 +6392,12 @@ ${numberedTexts}`;
         total,
         status: this.isPaused ? "pending" : "completed"
       });
-      if (failedCount === 0) {
-        showToast(`翻译完成：${successCount} 张图片`, "success");
-      } else if (successCount === 0) {
-        showToast(`翻译失败：所有 ${failedCount} 张图片都失败了`, "error");
-      } else {
-        showToast(`翻译完成：${successCount} 张成功，${failedCount} 张失败`, "warning");
-      }
-      return { success: successCount, failed: failedCount };
+      aggregatedTimings.totalMs = Date.now() - batchStartTime;
+      return { success: successCount, failed: failedCount, timings: aggregatedTimings };
     }
     // 翻译单张图片
     async translateSingleImage(img) {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
       if (!this.settings) {
         await this.loadSettings();
       }
@@ -6245,11 +6419,19 @@ ${numberedTexts}`;
       const originalSrc = this.getOriginalSrc(img);
       if (img.dataset.mfTranslated === "1") {
         console.log(`[MangaFlow] 已翻译，跳过: ${originalSrc.substring(originalSrc.lastIndexOf("/") + 1)}`);
-        return;
+        return null;
       }
       img.dataset.mfOriginalSrc = originalSrc;
       const imgSrc = originalSrc;
       const imgName = imgSrc.substring(imgSrc.lastIndexOf("/") + 1);
+      const totalStartTime = Date.now();
+      const stageTimings = {
+        roiMs: 0,
+        ocrMs: 0,
+        translateMs: 0,
+        renderMs: 0,
+        totalMs: 0
+      };
       console.log(`[MangaFlow] 🔄 开始处理: ${imgName}`);
       console.log(`[MangaFlow] 📍 语言: ${sourceLang} → ${targetLang}`);
       const roiStartTime = Date.now();
@@ -6258,6 +6440,7 @@ ${numberedTexts}`;
         debugLabel: `${imgName}-ROI`
       });
       const roiDuration = Date.now() - roiStartTime;
+      stageTimings.roiMs = roiDuration;
       const imgW = img.naturalWidth || img.width;
       const imgH = img.naturalHeight || img.height;
       const imgArea = Math.max(1, imgW * imgH);
@@ -6278,7 +6461,8 @@ ${numberedTexts}`;
       }
       if (devMode && devPhase === "roi") {
         console.log("[MangaFlow] 🛑 阶段 A：仅 ROI 检测，跳过 OCR/翻译/渲染");
-        return;
+        stageTimings.totalMs = Date.now() - totalStartTime;
+        return { originalSrc, rendered: false, timings: stageTimings };
       }
       const ocrStartTime = Date.now();
       let ocrResult = null;
@@ -6311,14 +6495,17 @@ ${numberedTexts}`;
         this.ocrEngine.drawDebugBoxesFor(img, ocrResult.blocks, devMode);
       }
       const ocrDuration = Date.now() - ocrStartTime;
+      stageTimings.ocrMs = ocrDuration;
       if (!ocrResult || !ocrResult.blocks.length) {
         console.log(`[MangaFlow] ⚠️ ${imgName}: 未检测到有效文字`);
-        return;
+        stageTimings.totalMs = Date.now() - totalStartTime;
+        return { originalSrc, rendered: false, timings: stageTimings };
       }
       console.log(`[MangaFlow] ✅ ${imgName}: OCR 完成 (${ocrDuration}ms)，共 ${ocrResult.blocks.length} 个文本块`);
       if (devMode && devPhase === "ocr") {
         console.log("[MangaFlow] 🛑 阶段 B：OCR 完成，跳过翻译/渲染");
-        return;
+        stageTimings.totalMs = Date.now() - totalStartTime;
+        return { originalSrc, rendered: false, timings: stageTimings };
       }
       const decisions = ocrResult.blocks.map(
         (block) => this.textFilter.classify(block.text, block.bbox)
@@ -6345,7 +6532,8 @@ ${numberedTexts}`;
       const filteredBlocks = this.applyContextualFilters(keptBlocks, ocrResult.blocks);
       if (!filteredBlocks.length) {
         console.log(`[MangaFlow] ⚠️ ${imgName}: 过滤后无需翻译的文本`);
-        return;
+        stageTimings.totalMs = Date.now() - totalStartTime;
+        return { originalSrc, rendered: false, timings: stageTimings };
       }
       const groups = this.filterGroupsForTranslation(
         this.groupTextBlocks(filteredBlocks),
@@ -6379,6 +6567,7 @@ ${numberedTexts}`;
         translations = textsToTranslate.map(() => `[翻译失败: ${error.message}]`);
       }
       const translateDuration = Date.now() - translateStartTime;
+      stageTimings.translateMs = translateDuration;
       console.group(`[MangaFlow] 📝 ${imgName} - 翻译结果`);
       console.log(`引擎: ${engine} | OCR: ${ocrDuration}ms | 翻译: ${translateDuration}ms`);
       console.log("─".repeat(50));
@@ -6390,14 +6579,17 @@ ${numberedTexts}`;
       console.groupEnd();
       if (devMode && devPhase === "translate") {
         console.log("[MangaFlow] 🛑 阶段 C：翻译完成，跳过渲染");
-        return;
+        stageTimings.totalMs = Date.now() - totalStartTime;
+        return { originalSrc, rendered: false, timings: stageTimings };
       }
       console.log(`[MangaFlow] 🎨 渲染中...`);
+      const renderStartTime = Date.now();
       const renderGroups = this.buildRenderGroups(groups, translations);
       const activeGroups = renderGroups.filter((g) => g.text && !g.text.startsWith("[翻译失败"));
       if (!activeGroups.length) {
         console.log(`[MangaFlow] ⚠️ ${imgName}: 无有效译文，跳过渲染`);
-        return;
+        stageTimings.totalMs = Date.now() - totalStartTime;
+        return { originalSrc, rendered: false, timings: stageTimings };
       }
       const { canvas, analysis } = await this.imageProcessor.processImage(img, activeGroups);
       if (devMode) {
@@ -6418,7 +6610,19 @@ ${numberedTexts}`;
         const renderedImage = canvas.toDataURL("image/png");
         img.src = renderedImage;
         img.dataset.mfTranslated = "1";
+        img.dataset.mfTranslatedSrc = renderedImage;
+        img.dataset.mfViewMode = "translated";
+        stageTimings.renderMs = Date.now() - renderStartTime;
+        stageTimings.totalMs = Date.now() - totalStartTime;
+        const result = {
+          originalSrc,
+          renderedSrc: renderedImage,
+          rendered: true,
+          timings: stageTimings
+        };
+        (_q = this.onImageTranslated) == null ? void 0 : _q.call(this, result, img);
         console.log(`[MangaFlow] ✅ ${imgName}: 翻译完成！`);
+        return result;
       } catch (error) {
         console.error(`[MangaFlow] ❌ ${imgName}: 导出失败`, error);
         if (error.message.includes("Tainted")) {
@@ -6649,8 +6853,40 @@ ${numberedTexts}`;
       });
     }
   }
+  const DEFAULT_SETTINGS = {
+    sourceLang: "ko",
+    targetLang: "zh",
+    translateEngine: "google",
+    apiBaseUrl: "",
+    apiKey: "",
+    model: "gpt-4o-mini",
+    deeplxUrl: "",
+    deeplApiKey: "",
+    fontSize: 14,
+    fontScale: 1,
+    fontColor: "#000000",
+    maskOpacity: 0.24,
+    ocrEngine: "local",
+    cloudOcrKey: "",
+    requestDelay: 0,
+    devMode: true,
+    devPhase: "roi",
+    showOcrBoxes: true,
+    showRoiBoxes: true,
+    showMaskBoxes: false,
+    sitePolicy: "auto_detect",
+    siteWhitelist: []
+  };
+  function normalizeSettings(settings) {
+    return {
+      ...DEFAULT_SETTINGS,
+      ...settings,
+      targetLang: "zh",
+      sitePolicy: (settings == null ? void 0 : settings.sitePolicy) || DEFAULT_SETTINGS.sitePolicy,
+      siteWhitelist: Array.isArray(settings == null ? void 0 : settings.siteWhitelist) ? settings.siteWhitelist : []
+    };
+  }
   class MangaFlow {
-    // 已翻译的图片
     constructor() {
       this.floatingBall = null;
       this.settingsPanel = null;
@@ -6659,6 +6895,20 @@ ${numberedTexts}`;
       this.isInitialized = false;
       this.isTranslating = false;
       this.translatedImages = /* @__PURE__ */ new Set();
+      this.translatedImageRecords = /* @__PURE__ */ new Map();
+      this.settings = DEFAULT_SETTINGS;
+      this.pageQualified = false;
+      this.floatingBallHiddenForTab = false;
+      this.viewMode = "translated";
+      this.ballState = "idle";
+      this.stageTimings = this.createEmptyTimings();
+      this.elapsedTimerId = null;
+      this.elapsedBaseMs = 0;
+      this.elapsedStartedAt = null;
+      this.floatingBallPrefs = {
+        globallyDisabled: false,
+        disabledSites: []
+      };
       this.init();
     }
     async init() {
@@ -6672,10 +6922,15 @@ ${numberedTexts}`;
       if (this.isInitialized) return;
       this.isInitialized = true;
       console.log("漫译 MangaFlow 初始化中...");
+      this.settings = await this.loadStoredSettings();
+      this.floatingBallPrefs = await this.loadFloatingBallPrefs();
       this.floatingBall = new FloatingBall({
         onStart: () => this.startTranslation(),
         onPause: () => this.pauseTranslation(),
-        onSettings: () => this.openSettings()
+        onSettings: () => this.openSettings(),
+        onDisableSite: () => this.disableCurrentSite(),
+        onDisableGlobal: () => this.disableGlobally(),
+        onToggleView: () => this.toggleViewMode()
       });
       this.settingsPanel = new SettingsPanel({
         onSave: (settings) => this.saveSettings(settings),
@@ -6685,19 +6940,37 @@ ${numberedTexts}`;
       });
       this.imageDetector = new ImageDetector();
       this.translationController = new TranslationController();
+      this.translationController.updateSettings(this.settings);
+      this.translationController.setOnImageTranslated((result, img) => {
+        this.handleImageTranslated(result, img);
+      });
       this.imageDetector.setOnNewImage((img) => {
         this.onNewImageDetected(img);
       });
+      this.imageDetector.setOnComicImageDetected((img) => {
+        this.onComicImageQualified(img);
+      });
       this.floatingBall.mount();
+      this.floatingBall.setViewMode(this.viewMode);
+      this.floatingBall.setHasTranslationResult(false);
+      this.updateFloatingBallState("idle");
+      await this.evaluatePageQualification();
+      this.bindRuntimeMessages();
+      console.log("漫译 MangaFlow 初始化完成");
+    }
+    bindRuntimeMessages() {
       chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         var _a;
         if (message.type === "START_TRANSLATION") {
-          this.startTranslation();
-          sendResponse({ success: true });
-        } else if (message.type === "OPEN_SETTINGS") {
+          this.startTranslation().then(() => sendResponse({ success: true })).catch((error) => sendResponse({ success: false, error: error.message }));
+          return true;
+        }
+        if (message.type === "OPEN_SETTINGS") {
           this.openSettings();
           sendResponse({ success: true });
-        } else if (message.type === "CLEAR_CACHE") {
+          return true;
+        }
+        if (message.type === "CLEAR_CACHE") {
           (_a = this.translationController) == null ? void 0 : _a.clearCache().then(() => {
             this.translatedImages.clear();
             console.log("[MangaFlow] 缓存已清空（OCR/翻译）");
@@ -6708,11 +6981,28 @@ ${numberedTexts}`;
           });
           return true;
         }
-        return true;
+        if (message.type === "RESTORE_FLOATING_BALL") {
+          const visible = this.restoreFloatingBallFromPopup();
+          sendResponse({
+            success: visible,
+            visible,
+            qualified: this.pageQualified
+          });
+          return true;
+        }
+        if (message.type === "HIDE_FLOATING_BALL") {
+          this.hideFloatingBallForTab();
+          sendResponse({ success: true });
+          return true;
+        }
+        if (message.type === "TOGGLE_VIEW_MODE") {
+          const viewMode = this.toggleViewMode();
+          sendResponse({ success: !!viewMode, viewMode });
+          return true;
+        }
+        return false;
       });
-      console.log("漫译 MangaFlow 初始化完成");
     }
-    // 处理新检测到的图片（懒加载触发）
     async onNewImageDetected(img) {
       var _a;
       if (!this.isTranslating) return;
@@ -6726,42 +7016,240 @@ ${numberedTexts}`;
         console.error("[MangaFlow] 自动翻译失败:", error);
       }
     }
+    onComicImageQualified(_img) {
+      var _a;
+      if (!this.pageQualified) {
+        this.pageQualified = true;
+        console.log("[MangaFlow] 页面通过漫画图片预检，允许显示悬浮球");
+      }
+      if (this.shouldShowFloatingBall()) {
+        (_a = this.floatingBall) == null ? void 0 : _a.show();
+      }
+    }
+    async evaluatePageQualification() {
+      var _a;
+      const images = ((_a = this.imageDetector) == null ? void 0 : _a.getComicImages()) || [];
+      this.pageQualified = images.length > 0;
+      console.log(`[MangaFlow] 页面预检结果：${this.pageQualified ? "漫画页" : "非漫画页"}（${images.length} 张候选图）`);
+      this.applyFloatingBallVisibility();
+    }
+    shouldShowFloatingBall() {
+      if (this.floatingBallHiddenForTab) return false;
+      if (this.floatingBallPrefs.globallyDisabled) return false;
+      if (this.isCurrentSiteDisabled()) return false;
+      switch (this.settings.sitePolicy) {
+        case "always_show":
+          return true;
+        case "whitelist_only":
+          return this.isCurrentSiteWhitelisted();
+        case "auto_detect":
+        default:
+          return this.pageQualified;
+      }
+    }
+    applyFloatingBallVisibility() {
+      var _a, _b;
+      if (this.shouldShowFloatingBall()) {
+        (_a = this.floatingBall) == null ? void 0 : _a.show();
+      } else {
+        (_b = this.floatingBall) == null ? void 0 : _b.hide();
+      }
+    }
+    isCurrentSiteWhitelisted() {
+      const host = window.location.hostname;
+      const whitelist = this.settings.siteWhitelist || [];
+      return whitelist.some((item) => {
+        const normalized = item.trim().toLowerCase();
+        return normalized && (host === normalized || host.endsWith(`.${normalized}`));
+      });
+    }
+    isCurrentSiteDisabled() {
+      const host = window.location.hostname.toLowerCase();
+      return this.floatingBallPrefs.disabledSites.some((item) => {
+        const normalized = item.trim().toLowerCase();
+        return normalized && (host === normalized || host.endsWith(`.${normalized}`));
+      });
+    }
+    async disableCurrentSite() {
+      const host = window.location.hostname.toLowerCase();
+      if (!this.floatingBallPrefs.disabledSites.includes(host)) {
+        this.floatingBallPrefs.disabledSites.push(host);
+        await this.persistFloatingBallPrefs();
+      }
+      this.hideFloatingBallForTab();
+      showToast(`已禁用当前网站悬浮球：${host}`, "info");
+    }
+    async disableGlobally() {
+      this.floatingBallPrefs.globallyDisabled = true;
+      await this.persistFloatingBallPrefs();
+      this.hideFloatingBallForTab();
+      showToast("已全局禁用悬浮球，可在扩展面板重新开启", "info");
+    }
+    async restoreFloatingBallFromPopup() {
+      this.floatingBallPrefs.globallyDisabled = false;
+      const host = window.location.hostname.toLowerCase();
+      this.floatingBallPrefs.disabledSites = this.floatingBallPrefs.disabledSites.filter((item) => {
+        const normalized = item.trim().toLowerCase();
+        return normalized && normalized !== host;
+      });
+      await this.persistFloatingBallPrefs();
+      this.floatingBallHiddenForTab = false;
+      this.applyFloatingBallVisibility();
+      return this.shouldShowFloatingBall();
+    }
+    hideFloatingBallForTab() {
+      var _a;
+      this.floatingBallHiddenForTab = true;
+      (_a = this.floatingBall) == null ? void 0 : _a.hide();
+    }
     async startTranslation() {
-      var _a, _b, _c, _d, _e, _f;
+      var _a, _b, _c;
       if (!this.imageDetector || !this.translationController) return;
-      console.log("开始翻译...");
+      const isResume = this.ballState === "paused";
+      if (!isResume) {
+        this.stageTimings = this.createEmptyTimings();
+        this.resetElapsedClock();
+      }
+      this.translationController.resume();
       this.isTranslating = true;
-      (_a = this.floatingBall) == null ? void 0 : _a.setState("translating");
+      this.updateFloatingBallState("translating");
+      this.startElapsedClock();
       try {
         const images = this.imageDetector.getComicImages().filter((img) => img.dataset.mfTranslated !== "1");
         console.log(`检测到 ${images.length} 张漫画图片`);
         if (images.length === 0) {
-          (_b = this.floatingBall) == null ? void 0 : _b.setState("idle");
+          this.isTranslating = false;
+          this.stopElapsedClock(false);
+          (_a = this.floatingBall) == null ? void 0 : _a.hideProgress();
+          this.updateFloatingBallState("idle");
+          showToast("当前页面未识别到可翻译的漫画图片", "warning");
           return;
         }
+        (_b = this.floatingBall) == null ? void 0 : _b.updateProgress(0, images.length);
         images.forEach((img) => this.translatedImages.add(this.getOriginalSrc(img)));
         const result = await this.translationController.translateImages(images, (progress) => {
           var _a2;
           (_a2 = this.floatingBall) == null ? void 0 : _a2.updateProgress(progress.current, progress.total);
         });
+        this.stageTimings = result.timings;
+        this.stopElapsedClock(true);
+        this.isTranslating = true;
         if (result.failed === 0) {
-          (_c = this.floatingBall) == null ? void 0 : _c.setState("completed");
+          this.updateFloatingBallState("completed");
+          showToast(`翻译完成：${result.success} 张图片｜${this.formatStageSummary(result.timings)}`, "success", 4500);
         } else if (result.success === 0) {
-          (_d = this.floatingBall) == null ? void 0 : _d.setState("error");
+          this.updateFloatingBallState("error");
+          showToast(`翻译失败：${result.failed} 张图片｜${this.formatStageSummary(result.timings)}`, "error", 4500);
         } else {
-          (_e = this.floatingBall) == null ? void 0 : _e.setState("completed");
+          this.updateFloatingBallState("completed");
+          showToast(`翻译完成：${result.success} 张成功，${result.failed} 张失败｜${this.formatStageSummary(result.timings)}`, "warning", 5e3);
         }
+        (_c = this.floatingBall) == null ? void 0 : _c.setHasTranslationResult(this.translatedImageRecords.size > 0);
       } catch (error) {
         console.error("翻译失败:", error);
-        (_f = this.floatingBall) == null ? void 0 : _f.setState("error");
+        this.isTranslating = false;
+        this.stopElapsedClock(true);
+        this.updateFloatingBallState("error");
+        showToast(`翻译失败：${error.message}`, "error");
       }
     }
     pauseTranslation() {
-      var _a, _b;
+      var _a;
       console.log("暂停翻译");
       this.isTranslating = false;
       (_a = this.translationController) == null ? void 0 : _a.pause();
-      (_b = this.floatingBall) == null ? void 0 : _b.setState("paused");
+      this.stopElapsedClock(true);
+      this.updateFloatingBallState("paused");
+    }
+    handleImageTranslated(result, img) {
+      var _a;
+      if (!result.rendered || !result.renderedSrc) return;
+      this.translatedImageRecords.set(img, {
+        originalSrc: result.originalSrc,
+        translatedSrc: result.renderedSrc
+      });
+      (_a = this.floatingBall) == null ? void 0 : _a.setHasTranslationResult(true);
+      if (this.viewMode === "original") {
+        img.src = result.originalSrc;
+        img.dataset.mfViewMode = "original";
+      } else {
+        img.dataset.mfViewMode = "translated";
+      }
+    }
+    toggleViewMode() {
+      var _a;
+      if (!this.translatedImageRecords.size) return null;
+      this.viewMode = this.viewMode === "translated" ? "original" : "translated";
+      for (const [img, record] of this.translatedImageRecords.entries()) {
+        if (!img.isConnected) {
+          this.translatedImageRecords.delete(img);
+          continue;
+        }
+        img.src = this.viewMode === "translated" ? record.translatedSrc : record.originalSrc;
+        img.dataset.mfViewMode = this.viewMode;
+      }
+      (_a = this.floatingBall) == null ? void 0 : _a.setViewMode(this.viewMode);
+      return this.viewMode;
+    }
+    updateFloatingBallState(state) {
+      var _a;
+      this.ballState = state;
+      (_a = this.floatingBall) == null ? void 0 : _a.setState(state);
+    }
+    startElapsedClock() {
+      if (!this.floatingBall) return;
+      if (this.elapsedStartedAt === null) {
+        this.elapsedStartedAt = Date.now();
+      }
+      this.floatingBall.setElapsedTime(this.getElapsedTimeMs());
+      if (this.elapsedTimerId !== null) {
+        window.clearInterval(this.elapsedTimerId);
+      }
+      this.elapsedTimerId = window.setInterval(() => {
+        var _a;
+        (_a = this.floatingBall) == null ? void 0 : _a.setElapsedTime(this.getElapsedTimeMs());
+      }, 100);
+    }
+    stopElapsedClock(keepDisplay) {
+      var _a;
+      if (this.elapsedStartedAt !== null) {
+        this.elapsedBaseMs += Date.now() - this.elapsedStartedAt;
+        this.elapsedStartedAt = null;
+      }
+      if (this.elapsedTimerId !== null) {
+        window.clearInterval(this.elapsedTimerId);
+        this.elapsedTimerId = null;
+      }
+      (_a = this.floatingBall) == null ? void 0 : _a.setElapsedTime(keepDisplay ? this.elapsedBaseMs : null);
+    }
+    resetElapsedClock() {
+      var _a;
+      if (this.elapsedTimerId !== null) {
+        window.clearInterval(this.elapsedTimerId);
+        this.elapsedTimerId = null;
+      }
+      this.elapsedBaseMs = 0;
+      this.elapsedStartedAt = null;
+      (_a = this.floatingBall) == null ? void 0 : _a.setElapsedTime(null);
+    }
+    getElapsedTimeMs() {
+      if (this.elapsedStartedAt === null) {
+        return this.elapsedBaseMs;
+      }
+      return this.elapsedBaseMs + (Date.now() - this.elapsedStartedAt);
+    }
+    formatStageSummary(timings) {
+      const formatSeconds = (value) => `${(value / 1e3).toFixed(1)}s`;
+      return `OCR ${formatSeconds(timings.ocrMs)} | 翻译 ${formatSeconds(timings.translateMs)} | 渲染 ${formatSeconds(timings.renderMs)} | 总耗时 ${formatSeconds(timings.totalMs)}`;
+    }
+    createEmptyTimings() {
+      return {
+        roiMs: 0,
+        ocrMs: 0,
+        translateMs: 0,
+        renderMs: 0,
+        totalMs: 0
+      };
     }
     getOriginalSrc(img) {
       const dataSrc = img.dataset.mfOriginalSrc || img.getAttribute("data-src") || img.getAttribute("data-original") || img.getAttribute("data-lazy-src") || img.getAttribute("data-lazy") || img.getAttribute("data-srcset");
@@ -6774,12 +7262,48 @@ ${numberedTexts}`;
       var _a;
       (_a = this.settingsPanel) == null ? void 0 : _a.show();
     }
+    async loadStoredSettings() {
+      try {
+        const result = await chrome.storage.local.get("settings");
+        const settings = normalizeSettings(result.settings);
+        if (!result.settings) {
+          await chrome.storage.local.set({ settings });
+        }
+        return settings;
+      } catch (error) {
+        console.error("[MangaFlow] 读取设置失败，使用默认值:", error);
+        return DEFAULT_SETTINGS;
+      }
+    }
+    async loadFloatingBallPrefs() {
+      try {
+        const result = await chrome.storage.local.get("floatingBallPrefs");
+        const prefs = result.floatingBallPrefs;
+        return {
+          globallyDisabled: (prefs == null ? void 0 : prefs.globallyDisabled) ?? false,
+          disabledSites: Array.isArray(prefs == null ? void 0 : prefs.disabledSites) ? prefs.disabledSites : []
+        };
+      } catch (error) {
+        console.error("[MangaFlow] 读取悬浮球偏好失败:", error);
+        return {
+          globallyDisabled: false,
+          disabledSites: []
+        };
+      }
+    }
+    async persistFloatingBallPrefs() {
+      await chrome.storage.local.set({
+        floatingBallPrefs: this.floatingBallPrefs
+      });
+    }
     async saveSettings(settings) {
       var _a;
-      await chrome.storage.local.set({ settings });
-      console.log("设置已保存:", settings);
-      DebugOverlayManager.getInstance().applySettings(settings);
-      (_a = this.translationController) == null ? void 0 : _a.updateSettings(settings);
+      this.settings = normalizeSettings(settings);
+      await chrome.storage.local.set({ settings: this.settings });
+      console.log("设置已保存:", this.settings);
+      DebugOverlayManager.getInstance().applySettings(this.settings);
+      (_a = this.translationController) == null ? void 0 : _a.updateSettings(this.settings);
+      this.applyFloatingBallVisibility();
     }
   }
   new MangaFlow();

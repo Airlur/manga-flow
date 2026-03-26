@@ -1,7 +1,16 @@
 // 漫译 MangaFlow - 翻译控制器
 // 协调 OCR、翻译、渲染等模块
 
-import type { TranslationProgress, Settings } from '../../types';
+import type {
+    TranslationProgress,
+    Settings,
+    TextBlock,
+    BBox,
+    RenderGroup,
+    ImageTranslationResult,
+    BatchTranslationResult,
+    StageTimings,
+} from '../../types';
 import { OCREngine } from './ocr-engine';
 import { Translator } from './translator';
 import { ImageProcessor } from './image-processor';
@@ -11,7 +20,6 @@ import { TextFilter } from '../utils/text-filter';
 import { showToast } from '@/content/ui/toast';
 import { TextDetector } from './text-detector';
 import { DebugOverlayManager } from './debug-overlay';
-import type { TextBlock, BBox, RenderGroup } from '../../types';
 import { DEV_MODE } from '../../config/app-config';
 
 type TextGroup = {
@@ -33,6 +41,7 @@ export class TranslationController {
 
     private isPaused = false;
     private settings: Settings | null = null;
+    private onImageTranslated: ((result: ImageTranslationResult, img: HTMLImageElement) => void) | null = null;
 
     constructor() {
         this.ocrEngine = new OCREngine();
@@ -45,11 +54,15 @@ export class TranslationController {
         this.debugOverlay = DebugOverlayManager.getInstance();
     }
 
+    setOnImageTranslated(callback: (result: ImageTranslationResult, img: HTMLImageElement) => void): void {
+        this.onImageTranslated = callback;
+    }
+
     // 批量翻译图片
     async translateImages(
         images: HTMLImageElement[],
         onProgress?: (progress: TranslationProgress) => void
-    ): Promise<{ success: number; failed: number }> {
+    ): Promise<BatchTranslationResult> {
         await this.loadSettings();
         // 配置 OCR 引擎
         this.ocrEngine.configure(this.settings || {});
@@ -57,10 +70,18 @@ export class TranslationController {
             await this.ocrEngine.initLocal(this.settings?.sourceLang || 'ko');
         }
 
+        const batchStartTime = Date.now();
         const total = images.length;
         const batchSize = 3;
         let successCount = 0;
         let failedCount = 0;
+        const aggregatedTimings: StageTimings = {
+            roiMs: 0,
+            ocrMs: 0,
+            translateMs: 0,
+            renderMs: 0,
+            totalMs: 0,
+        };
 
         for (let i = 0; i < images.length; i += batchSize) {
             if (this.isPaused) break;
@@ -71,12 +92,13 @@ export class TranslationController {
             const results = await Promise.allSettled(
                 batch.map(async (img, batchIndex) => {
                     const index = i + batchIndex;
-                    await this.translateSingleImage(img);
+                    const result = await this.translateSingleImage(img);
                     onProgress?.({
                         current: index + 1,
                         total,
                         status: 'processing',
                     });
+                    return result;
                 })
             );
 
@@ -84,6 +106,12 @@ export class TranslationController {
             for (const result of results) {
                 if (result.status === 'fulfilled') {
                     successCount++;
+                    if (result.value) {
+                        aggregatedTimings.roiMs += result.value.timings.roiMs;
+                        aggregatedTimings.ocrMs += result.value.timings.ocrMs;
+                        aggregatedTimings.translateMs += result.value.timings.translateMs;
+                        aggregatedTimings.renderMs += result.value.timings.renderMs;
+                    }
                 } else {
                     failedCount++;
                     console.error('[MangaFlow] 图片翻译失败:', result.reason);
@@ -97,20 +125,13 @@ export class TranslationController {
             status: this.isPaused ? 'pending' : 'completed',
         });
 
-        // 显示结果 Toast
-        if (failedCount === 0) {
-            showToast(`翻译完成：${successCount} 张图片`, 'success');
-        } else if (successCount === 0) {
-            showToast(`翻译失败：所有 ${failedCount} 张图片都失败了`, 'error');
-        } else {
-            showToast(`翻译完成：${successCount} 张成功，${failedCount} 张失败`, 'warning');
-        }
+        aggregatedTimings.totalMs = Date.now() - batchStartTime;
 
-        return { success: successCount, failed: failedCount };
+        return { success: successCount, failed: failedCount, timings: aggregatedTimings };
     }
 
     // 翻译单张图片
-    async translateSingleImage(img: HTMLImageElement): Promise<void> {
+    async translateSingleImage(img: HTMLImageElement): Promise<ImageTranslationResult | null> {
         if (!this.settings) {
             await this.loadSettings();
         }
@@ -135,12 +156,20 @@ export class TranslationController {
         const originalSrc = this.getOriginalSrc(img);
         if (img.dataset.mfTranslated === '1') {
             console.log(`[MangaFlow] 已翻译，跳过: ${originalSrc.substring(originalSrc.lastIndexOf('/') + 1)}`);
-            return;
+            return null;
         }
         img.dataset.mfOriginalSrc = originalSrc;
 
         const imgSrc = originalSrc;
         const imgName = imgSrc.substring(imgSrc.lastIndexOf('/') + 1);
+        const totalStartTime = Date.now();
+        const stageTimings: StageTimings = {
+            roiMs: 0,
+            ocrMs: 0,
+            translateMs: 0,
+            renderMs: 0,
+            totalMs: 0,
+        };
 
         console.log(`[MangaFlow] 🔄 开始处理: ${imgName}`);
         console.log(`[MangaFlow] 📍 语言: ${sourceLang} → ${targetLang}`);
@@ -152,6 +181,7 @@ export class TranslationController {
             debugLabel: `${imgName}-ROI`,
         });
         const roiDuration = Date.now() - roiStartTime;
+        stageTimings.roiMs = roiDuration;
         const imgW = img.naturalWidth || img.width;
         const imgH = img.naturalHeight || img.height;
         const imgArea = Math.max(1, imgW * imgH);
@@ -174,7 +204,8 @@ export class TranslationController {
 
         if (devMode && devPhase === 'roi') {
             console.log('[MangaFlow] 🛑 阶段 A：仅 ROI 检测，跳过 OCR/翻译/渲染');
-            return;
+            stageTimings.totalMs = Date.now() - totalStartTime;
+            return { originalSrc, rendered: false, timings: stageTimings };
         }
 
         // 1. OCR 识别（裁剪识别）
@@ -209,17 +240,20 @@ export class TranslationController {
             this.ocrEngine.drawDebugBoxesFor(img, ocrResult.blocks, devMode);
         }
         const ocrDuration = Date.now() - ocrStartTime;
+        stageTimings.ocrMs = ocrDuration;
 
         if (!ocrResult || !ocrResult.blocks.length) {
             console.log(`[MangaFlow] ⚠️ ${imgName}: 未检测到有效文字`);
-            return;
+            stageTimings.totalMs = Date.now() - totalStartTime;
+            return { originalSrc, rendered: false, timings: stageTimings };
         }
 
         console.log(`[MangaFlow] ✅ ${imgName}: OCR 完成 (${ocrDuration}ms)，共 ${ocrResult.blocks.length} 个文本块`);
 
         if (devMode && devPhase === 'ocr') {
             console.log('[MangaFlow] 🛑 阶段 B：OCR 完成，跳过翻译/渲染');
-            return;
+            stageTimings.totalMs = Date.now() - totalStartTime;
+            return { originalSrc, rendered: false, timings: stageTimings };
         }
 
         // 2. 过滤不需要翻译的文本（含组内保护）
@@ -254,7 +288,8 @@ export class TranslationController {
 
         if (!filteredBlocks.length) {
             console.log(`[MangaFlow] ⚠️ ${imgName}: 过滤后无需翻译的文本`);
-            return;
+            stageTimings.totalMs = Date.now() - totalStartTime;
+            return { originalSrc, rendered: false, timings: stageTimings };
         }
 
         // 2.5 文本块聚类（按气泡/段落合并）
@@ -295,6 +330,7 @@ export class TranslationController {
             translations = textsToTranslate.map(() => `[翻译失败: ${(error as Error).message}]`);
         }
         const translateDuration = Date.now() - translateStartTime;
+        stageTimings.translateMs = translateDuration;
 
         console.group(`[MangaFlow] 📝 ${imgName} - 翻译结果`);
         console.log(`引擎: ${engine} | OCR: ${ocrDuration}ms | 翻译: ${translateDuration}ms`);
@@ -308,16 +344,19 @@ export class TranslationController {
 
         if (devMode && devPhase === 'translate') {
             console.log('[MangaFlow] 🛑 阶段 C：翻译完成，跳过渲染');
-            return;
+            stageTimings.totalMs = Date.now() - totalStartTime;
+            return { originalSrc, rendered: false, timings: stageTimings };
         }
 
         // 4. 背景修复 + 渲染（按组）
         console.log(`[MangaFlow] 🎨 渲染中...`);
+        const renderStartTime = Date.now();
         const renderGroups = this.buildRenderGroups(groups, translations);
         const activeGroups = renderGroups.filter((g) => g.text && !g.text.startsWith('[翻译失败'));
         if (!activeGroups.length) {
             console.log(`[MangaFlow] ⚠️ ${imgName}: 无有效译文，跳过渲染`);
-            return;
+            stageTimings.totalMs = Date.now() - totalStartTime;
+            return { originalSrc, rendered: false, timings: stageTimings };
         }
 
         const { canvas, analysis } = await this.imageProcessor.processImage(img, activeGroups);
@@ -341,7 +380,19 @@ export class TranslationController {
             const renderedImage = canvas.toDataURL('image/png');
             img.src = renderedImage;
             img.dataset.mfTranslated = '1';
+            img.dataset.mfTranslatedSrc = renderedImage;
+            img.dataset.mfViewMode = 'translated';
+            stageTimings.renderMs = Date.now() - renderStartTime;
+            stageTimings.totalMs = Date.now() - totalStartTime;
+            const result: ImageTranslationResult = {
+                originalSrc,
+                renderedSrc: renderedImage,
+                rendered: true,
+                timings: stageTimings,
+            };
+            this.onImageTranslated?.(result, img);
             console.log(`[MangaFlow] ✅ ${imgName}: 翻译完成！`);
+            return result;
         } catch (error) {
             console.error(`[MangaFlow] ❌ ${imgName}: 导出失败`, error);
             if ((error as Error).message.includes('Tainted')) {

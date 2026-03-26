@@ -10,6 +10,7 @@ export class ImageDetector {
     private processedImages: Set<string> = new Set();
     private siteConfig: SiteConfig;
     private onNewImage: ((img: HTMLImageElement) => void) | null = null;
+    private onComicImageDetected: ((img: HTMLImageElement) => void) | null = null;
 
     // 排除关键词（封面、缩略图、头像等）
     private static readonly EXCLUDE_KEYWORDS = [
@@ -122,6 +123,7 @@ export class ImageDetector {
         if (this.isComicImage(img)) {
             console.log('[MangaFlow] ✓ 识别为漫画图片:', src.substring(src.lastIndexOf('/') + 1));
             this.processedImages.add(src);
+            this.onComicImageDetected?.(img);
             this.intersectionObserver?.observe(img);
         }
     }
@@ -212,6 +214,11 @@ export class ImageDetector {
     // 设置新图片回调
     setOnNewImage(callback: (img: HTMLImageElement) => void): void {
         this.onNewImage = callback;
+    }
+
+    // 设置漫画图片检测回调（用于悬浮球显示策略）
+    setOnComicImageDetected(callback: (img: HTMLImageElement) => void): void {
+        this.onComicImageDetected = callback;
     }
 
     // 销毁
