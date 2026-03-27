@@ -1,6 +1,7 @@
 ﻿# MangaFlow 方案与改进计划
 
 版本记录
+- v0.7.2 (2026-03-26)：Popup / 设置面板局部 React 化落地；引入统一黑白灰 UI token、自定义下拉与字体继承收口。
 - v0.7.1 (2026-03-26)：贴边悬浮球交互收敛；补充 popup 恢复入口、原/译切换与阶段耗时反馈。
 - v0.7 (2026-03-23)：方案重评估；纳入 PaddleOCR/本地服务/LaMa/UI 重构/站点策略/WebDAV 同步计划。
 - v0.6.1 (2026-02-05)：渲染决策稳定化（短文本不擦除、气泡优先擦除）、气泡分析范围扩展、遮罩/字体颜色设置生效。
@@ -496,39 +497,38 @@ packages:
    - `Settings` 补充 `sitePolicy / siteWhitelist`
    - `pnpm type-check`、`pnpm build` 已通过
 
-### 十二、v0.7.2 延后：Popup / Settings 面板视觉重构
-以下内容从原先误记的 v0.7.1 中正式下沉到 **v0.7.2**：
-1) popup 主面板整体风格重做（shadcn-ui / Vercel 黑白灰极简）
-2) settings 面板整体结构与组件美化
-3) OpenAI 兼容多 provider UI、品牌 logo、专业 icon、统一表单态
-4) 站点策略 UI、白名单管理 UI、后续 WebDAV / provider 管理入口
+### 十二、v0.7.2 已完成：Popup / Settings 面板局部 React 化
+本轮已按“**局部 React 化，不动核心 OCR / 翻译 / content script 主链路**”执行完成：
+1) Popup 改为 React 入口，保留原有消息协议与存储逻辑
+2) 设置面板改为 React 挂载，继续复用保存、测试服务、获取模型列表逻辑
+3) 新增统一黑白灰 UI token、自定义下拉、按钮、输入框、状态提示
+4) 修复 popup / 设置面板 / toast / 悬浮球的字体继承不一致问题
+5) 补齐设置面板中的：
+   - API Base URL `/chat/completions` 预览
+   - API Key 专业 eye / eye-off icon
+   - Microsoft / DeepL / DeepLX / OpenAI 兼容 API helper text
+   - 站点策略与白名单 UI
+6) `pnpm type-check`、`pnpm build` 已通过
 
-### 十三、v0.7.2 新增补充：UI 字体一致性与移动端交互风险
-本轮讨论新增两类需要明确承接的问题：
+### 十三、v0.7.3 延续项：UI 细化与移动端交互风险
+本轮仍保留到后续版本的内容：
 
-1) **全局 UI 字体一致性问题**
-   - 问题范围不只悬浮球，还包括 **popup 主面板、设置面板、内容脚本 UI 浮层**。
-   - 当前表现是：同一套前端 UI 内部，部分文本显示正常，部分文本字重 / 行高 / 字形观感异常。
-   - 初步判断优先从 **前端 UI 样式重置不完整、按钮/输入控件字体继承不一致、宿主页面样式污染内容脚本 UI** 这三类原因排查。
-   - 后续需要统一：
-     - `font-family`
-     - `font-size`
-     - `font-weight`
-     - `line-height`
-     - button / input / select / small / helper text 的继承链
-   - 如常规样式收口仍不足，再评估更强的样式隔离方案。
+1) **OpenAI 兼容多 provider 配置**
+   - 当前仍是单套 `apiBaseUrl / apiKey / model`
+   - 后续再拆成多提供商配置、切换与管理 UI
 
 2) **移动端悬浮球交互风险**
-   - 当前桌面端依赖 hover 显示关闭入口，但移动端没有稳定 hover。
-   - 现有 3 段式悬浮球（`logo + ... + 翻译切换`）在手机端可能更遮挡阅读区域。
-   - 已确认的约束：
-     - 不建议把“点击主 logo 先展开操作态”作为移动端默认方案，避免误触开始翻译。
-   - 后续优先评估方案：
-     - 移动端/小屏默认收缩为 **2 段式 `logo + ...`**
-     - 将关闭 / 原图译图切换 / 禁用站点等操作收进 `...` 的操作菜单
-     - 桌面端是否也统一为收缩方案，后续根据阅读遮挡与操作效率再决定
-   - 该问题先记录，不在本轮继续扩改。
+   - 当前桌面端依赖 hover 显示关闭入口，但移动端没有稳定 hover
+   - 后续优先评估：
+     - 默认收缩为 2 段式 `logo + ...`
+     - 将关闭 / 原图译图切换 / 禁用站点操作收进 `...` 菜单
+     - 桌面端是否也统一为更收缩结构
+
+3) **UI 深水区细化**
+   - 暗色主题
+   - 更强的样式隔离（如必要时再评估 Shadow DOM）
+   - 小屏 / 响应式 / 视觉微调
 
 下一步继续：
-1) 先完成 **v0.7.2** 的 popup / settings UI 重构，并优先修复 UI 字体一致性
+1) 进入 **v0.7.3**，继续补多 provider 管理与移动端 UI fallback
 2) 再进入 `server/` 本地 OCR 服务骨架与 `PP-OCRv5_mobile_det + korean_PP-OCRv5_mobile_rec` 最小闭环

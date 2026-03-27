@@ -9,6 +9,8 @@ interface APIRequest {
     text?: string;
     imageUrl?: string;
     settings?: {
+        sourceLang?: string;
+        targetLang?: string;
         apiBaseUrl?: string;
         apiKey?: string;
         model?: string;
@@ -94,13 +96,16 @@ async function handleTestTranslation(
     text: string,
     settings: APIRequest['settings']
 ): Promise<string> {
+    const sourceLang = settings?.sourceLang || 'auto';
+    const targetLang = settings?.targetLang || 'zh';
+
     switch (engine) {
         case 'microsoft':
-            return testMicrosoftTranslate(text);
+            return testMicrosoftTranslate(text, sourceLang, targetLang);
         case 'google':
-            return testGoogleTranslate(text);
+            return testGoogleTranslate(text, sourceLang, targetLang);
         case 'openai':
-            return testOpenAITranslate(text, settings!);
+            return testOpenAITranslate(text, settings!, sourceLang, targetLang);
         case 'deeplx':
             return testDeepLXTranslate(text, settings!);
         case 'deepl':
@@ -111,10 +116,10 @@ async function handleTestTranslation(
 }
 
 // 测试微软翻译
-async function testMicrosoftTranslate(text: string): Promise<string> {
+async function testMicrosoftTranslate(text: string, sourceLang: string, targetLang: string): Promise<string> {
     // 微软翻译免费 API（通过 Edge 翻译服务）
     // 注意：这是一个公共 API，可能有频率限制
-    const url = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=zh-Hans`;
+    const url = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${mapToMicrosoftLang(targetLang) || 'zh-Hans'}`;
 
     try {
         const response = await fetch(url, {
@@ -128,20 +133,20 @@ async function testMicrosoftTranslate(text: string): Promise<string> {
         if (!response.ok) {
             // 微软 API 需要 token，回退到 Google
             console.warn('[MangaFlow] 微软翻译需要认证，回退到 Google 翻译');
-            return testGoogleTranslate(text);
+            return testGoogleTranslate(text, sourceLang, targetLang);
         }
 
         const data = await response.json();
         return data[0]?.translations?.[0]?.text || '';
     } catch {
         // 回退到 Google 翻译
-        return testGoogleTranslate(text);
+        return testGoogleTranslate(text, sourceLang, targetLang);
     }
 }
 
 // 测试 Google 翻译
-async function testGoogleTranslate(text: string): Promise<string> {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`;
+async function testGoogleTranslate(text: string, sourceLang: string, targetLang: string): Promise<string> {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${mapToGoogleLang(sourceLang) || 'auto'}&tl=${mapToGoogleLang(targetLang) || 'zh-CN'}&dt=t&q=${encodeURIComponent(text)}`;
 
     const response = await fetch(url);
 
@@ -161,7 +166,9 @@ async function testGoogleTranslate(text: string): Promise<string> {
 // 测试 OpenAI 兼容 API
 async function testOpenAITranslate(
     text: string,
-    settings: APIRequest['settings']
+    settings: APIRequest['settings'],
+    sourceLang: string,
+    targetLang: string
 ): Promise<string> {
     if (!settings?.apiBaseUrl || !settings?.apiKey) {
         throw new Error('请先配置 API 地址和 Key');
@@ -180,7 +187,7 @@ async function testOpenAITranslate(
             messages: [
                 {
                     role: 'system',
-                    content: '你是一个翻译助手。请将用户输入的文本翻译成简体中文。只输出翻译结果，不要解释。',
+                    content: `你是一个翻译助手。请将用户输入的${getLanguageLabel(sourceLang)}文本翻译成${getLanguageLabel(targetLang)}。只输出翻译结果，不要解释。`,
                 },
                 {
                     role: 'user',
@@ -216,8 +223,8 @@ async function testDeepLXTranslate(
         },
         body: JSON.stringify({
             text,
-            source_lang: 'auto',
-            target_lang: 'ZH',
+            source_lang: settings.sourceLang || 'auto',
+            target_lang: mapToDeepLang(settings.targetLang) || 'ZH',
         }),
     });
 
@@ -253,7 +260,8 @@ async function testDeepLTranslate(
         },
         body: JSON.stringify({
             text: [text],
-            target_lang: 'ZH',
+            source_lang: mapToDeepLang(settings.sourceLang),
+            target_lang: mapToDeepLang(settings.targetLang) || 'ZH',
         }),
     });
 
@@ -297,3 +305,52 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 console.log('漫译 MangaFlow Service Worker 已启动');
+
+function mapToDeepLang(lang?: string): string | null {
+    const langMap: Record<string, string> = {
+        ko: 'KO',
+        ja: 'JA',
+        en: 'EN',
+        zh: 'ZH',
+    };
+
+    if (!lang || lang === 'auto') return null;
+    return langMap[lang] || null;
+}
+
+function mapToGoogleLang(lang?: string): string | null {
+    const langMap: Record<string, string> = {
+        auto: 'auto',
+        ko: 'ko',
+        ja: 'ja',
+        en: 'en',
+        zh: 'zh-CN',
+    };
+
+    if (!lang) return null;
+    return langMap[lang] || null;
+}
+
+function mapToMicrosoftLang(lang?: string): string | null {
+    const langMap: Record<string, string> = {
+        ko: 'ko',
+        ja: 'ja',
+        en: 'en',
+        zh: 'zh-Hans',
+    };
+
+    if (!lang || lang === 'auto') return null;
+    return langMap[lang] || null;
+}
+
+function getLanguageLabel(lang?: string): string {
+    const langMap: Record<string, string> = {
+        auto: '原文',
+        ko: '韩语',
+        ja: '日语',
+        en: '英语',
+        zh: '简体中文',
+    };
+
+    return langMap[lang || ''] || '目标语言';
+}

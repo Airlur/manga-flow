@@ -41,13 +41,15 @@ async function fetchImageAsBase64(imageUrl) {
   });
 }
 async function handleTestTranslation(engine, text, settings) {
+  const sourceLang = (settings == null ? void 0 : settings.sourceLang) || "auto";
+  const targetLang = (settings == null ? void 0 : settings.targetLang) || "zh";
   switch (engine) {
     case "microsoft":
-      return testMicrosoftTranslate(text);
+      return testMicrosoftTranslate(text, sourceLang, targetLang);
     case "google":
-      return testGoogleTranslate(text);
+      return testGoogleTranslate(text, sourceLang, targetLang);
     case "openai":
-      return testOpenAITranslate(text, settings);
+      return testOpenAITranslate(text, settings, sourceLang, targetLang);
     case "deeplx":
       return testDeepLXTranslate(text, settings);
     case "deepl":
@@ -56,9 +58,9 @@ async function handleTestTranslation(engine, text, settings) {
       throw new Error("未知的翻译引擎");
   }
 }
-async function testMicrosoftTranslate(text) {
+async function testMicrosoftTranslate(text, sourceLang, targetLang) {
   var _a, _b, _c;
-  const url = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=zh-Hans`;
+  const url = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${mapToMicrosoftLang(targetLang) || "zh-Hans"}`;
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -69,16 +71,16 @@ async function testMicrosoftTranslate(text) {
     });
     if (!response.ok) {
       console.warn("[MangaFlow] 微软翻译需要认证，回退到 Google 翻译");
-      return testGoogleTranslate(text);
+      return testGoogleTranslate(text, sourceLang, targetLang);
     }
     const data = await response.json();
     return ((_c = (_b = (_a = data[0]) == null ? void 0 : _a.translations) == null ? void 0 : _b[0]) == null ? void 0 : _c.text) || "";
   } catch {
-    return testGoogleTranslate(text);
+    return testGoogleTranslate(text, sourceLang, targetLang);
   }
 }
-async function testGoogleTranslate(text) {
-  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`;
+async function testGoogleTranslate(text, sourceLang, targetLang) {
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${mapToGoogleLang(sourceLang) || "auto"}&tl=${mapToGoogleLang(targetLang) || "zh-CN"}&dt=t&q=${encodeURIComponent(text)}`;
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Google 翻译请求失败");
@@ -89,7 +91,7 @@ async function testGoogleTranslate(text) {
   }
   throw new Error("Google 翻译返回格式错误");
 }
-async function testOpenAITranslate(text, settings) {
+async function testOpenAITranslate(text, settings, sourceLang, targetLang) {
   var _a, _b, _c, _d;
   if (!(settings == null ? void 0 : settings.apiBaseUrl) || !(settings == null ? void 0 : settings.apiKey)) {
     throw new Error("请先配置 API 地址和 Key");
@@ -106,7 +108,7 @@ async function testOpenAITranslate(text, settings) {
       messages: [
         {
           role: "system",
-          content: "你是一个翻译助手。请将用户输入的文本翻译成简体中文。只输出翻译结果，不要解释。"
+          content: `你是一个翻译助手。请将用户输入的${getLanguageLabel(sourceLang)}文本翻译成${getLanguageLabel(targetLang)}。只输出翻译结果，不要解释。`
         },
         {
           role: "user",
@@ -135,8 +137,8 @@ async function testDeepLXTranslate(text, settings) {
     },
     body: JSON.stringify({
       text,
-      source_lang: "auto",
-      target_lang: "ZH"
+      source_lang: settings.sourceLang || "auto",
+      target_lang: mapToDeepLang(settings.targetLang) || "ZH"
     })
   });
   if (!response.ok) {
@@ -162,7 +164,8 @@ async function testDeepLTranslate(text, settings) {
     },
     body: JSON.stringify({
       text: [text],
-      target_lang: "ZH"
+      source_lang: mapToDeepLang(settings.sourceLang),
+      target_lang: mapToDeepLang(settings.targetLang) || "ZH"
     })
   });
   if (!response.ok) {
@@ -200,4 +203,45 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 console.log("漫译 MangaFlow Service Worker 已启动");
+function mapToDeepLang(lang) {
+  const langMap = {
+    ko: "KO",
+    ja: "JA",
+    en: "EN",
+    zh: "ZH"
+  };
+  if (!lang || lang === "auto") return null;
+  return langMap[lang] || null;
+}
+function mapToGoogleLang(lang) {
+  const langMap = {
+    auto: "auto",
+    ko: "ko",
+    ja: "ja",
+    en: "en",
+    zh: "zh-CN"
+  };
+  if (!lang) return null;
+  return langMap[lang] || null;
+}
+function mapToMicrosoftLang(lang) {
+  const langMap = {
+    ko: "ko",
+    ja: "ja",
+    en: "en",
+    zh: "zh-Hans"
+  };
+  if (lang === "auto") return null;
+  return langMap[lang] || null;
+}
+function getLanguageLabel(lang) {
+  const langMap = {
+    auto: "原文",
+    ko: "韩语",
+    ja: "日语",
+    en: "英语",
+    zh: "简体中文"
+  };
+  return langMap[lang || ""] || "目标语言";
+}
 //# sourceMappingURL=service-worker.js.map

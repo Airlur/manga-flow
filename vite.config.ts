@@ -1,3 +1,4 @@
+import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
 
@@ -8,6 +9,7 @@ const isContentBuild = process.env.BUILD_TARGET === 'content';
 // 1. BUILD_TARGET=content: 构建 content script (IIFE 格式)
 // 2. 默认: 构建 popup 和 service-worker (ES 格式)
 export default defineConfig({
+    plugins: [react()],
     build: {
         outDir: 'dist',
         emptyOutDir: isContentBuild, // 只有第一阶段（content）构建时清空
@@ -23,7 +25,7 @@ export default defineConfig({
             // Popup 和 Service Worker
             input: {
                 'background/service-worker': fileURLToPath(new URL('./src/background/service-worker.ts', import.meta.url)),
-                'popup/popup': fileURLToPath(new URL('./src/popup/popup.ts', import.meta.url)),
+                'popup/popup': fileURLToPath(new URL('./src/popup/popup.tsx', import.meta.url)),
             },
             output: {
                 entryFileNames: '[name].js',

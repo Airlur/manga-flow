@@ -29,7 +29,7 @@ export function normalizeSettings(settings?: Partial<Settings>): Settings {
     return {
         ...DEFAULT_SETTINGS,
         ...settings,
-        targetLang: 'zh',
+        targetLang: settings?.targetLang || DEFAULT_SETTINGS.targetLang,
         sitePolicy: settings?.sitePolicy || DEFAULT_SETTINGS.sitePolicy,
         siteWhitelist: Array.isArray(settings?.siteWhitelist) ? settings.siteWhitelist : [],
     };

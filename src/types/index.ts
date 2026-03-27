@@ -2,8 +2,8 @@
 
 // 设置配置
 export interface Settings {
-    sourceLang: 'ko' | 'ja' | 'en' | 'auto';
-    targetLang: 'zh';
+    sourceLang: 'ko' | 'ja' | 'en' | 'zh' | 'auto';
+    targetLang: 'ko' | 'ja' | 'en' | 'zh';
     // 翻译引擎选择
     translateEngine: 'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl';
     // OpenAI 兼容 API 配置
