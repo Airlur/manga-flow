@@ -28,7 +28,13 @@
         "dist/content/index.js"
       ],
       "css": [
-        "src/styles/content.css"
+        "src/styles/tokens.css",
+        "src/styles/content/base.css",
+        "src/styles/content/floating-ball.css",
+        "src/styles/content/settings-panel.css",
+        "src/styles/content/toast.css",
+        "src/styles/content/overlays.css",
+        "src/styles/content/provider-manager.css"
       ],
       "run_at": "document_idle"
     }
@@ -57,6 +63,8 @@
         "src/assets/*",
         "src/assets/ocr/*",
         "src/assets/providers/*",
+        "src/styles/*",
+        "src/styles/content/*",
         "icons/*",
         "src/*"
       ],

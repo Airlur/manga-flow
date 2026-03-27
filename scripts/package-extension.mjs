@@ -69,7 +69,7 @@ async function main() {
   await cp(path.join(rootDir, 'src', 'assets'), path.join(outputDir, 'src', 'assets'), { recursive: true, force: true });
   await copyFileEnsuringDir(path.join(rootDir, 'src', 'popup', 'popup.html'), path.join(outputDir, 'src', 'popup', 'popup.html'));
   await copyFileEnsuringDir(path.join(rootDir, 'src', 'popup', 'popup.css'), path.join(outputDir, 'src', 'popup', 'popup.css'));
-  await copyFileEnsuringDir(path.join(rootDir, 'src', 'styles', 'content.css'), path.join(outputDir, 'src', 'styles', 'content.css'));
+  await cp(path.join(rootDir, 'src', 'styles'), path.join(outputDir, 'src', 'styles'), { recursive: true, force: true });
 
   const totalSize = await getDirectorySize(outputDir);
   const totalMb = (totalSize / 1024 / 1024).toFixed(2);
