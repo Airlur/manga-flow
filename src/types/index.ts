@@ -1,64 +1,63 @@
-// 漫译 MangaFlow - 全局类型定义
-
-// 设置配置
-export interface Settings {
-    sourceLang: 'ko' | 'ja' | 'en' | 'zh' | 'auto';
-    targetLang: 'ko' | 'ja' | 'en' | 'zh';
-    // 翻译引擎选择
-    translateEngine: 'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl';
-    // OpenAI 兼容 API 配置
+export interface OpenAIProvider {
+    id: string;
+    name: string;
     apiBaseUrl: string;
     apiKey: string;
     model: string;
-    // DeepLX 配置（如: https://api.deeplx.org/YOUR_KEY/translate）
+    models: string[];
+    enabled: boolean;
+}
+
+export interface Settings {
+    sourceLang: 'ko' | 'ja' | 'en' | 'zh' | 'auto';
+    targetLang: 'ko' | 'ja' | 'en' | 'zh';
+    translateEngine: 'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl';
+
+    apiBaseUrl: string;
+    apiKey: string;
+    model: string;
+    openaiProviders?: OpenAIProvider[];
+
     deeplxUrl: string;
-    // DeepL 官方 API 配置
     deeplApiKey: string;
-    // 显示设置
+
     fontSize: number;
     fontScale?: number;
     fontColor: string;
     maskOpacity?: number;
-    // OCR 设置
+
     ocrEngine: 'local' | 'cloud';
     cloudOcrKey: string;
-    // 请求延迟（毫秒，用于有 RPM 限制的 API）
     requestDelay?: number;
 
-    // 开发模式（仅调试用）
     devMode?: boolean;
     devPhase?: 'roi' | 'ocr' | 'translate' | 'full';
     showOcrBoxes?: boolean;
     showRoiBoxes?: boolean;
     showMaskBoxes?: boolean;
 
-    // 站点运行策略
     sitePolicy?: 'auto_detect' | 'whitelist_only' | 'always_show';
     siteWhitelist?: string[];
 }
 
-// OCR 结果
 export interface OCRResult {
     text: string;
     confidence: number;
     blocks: TextBlock[];
 }
 
-// 文本块
 export interface TextBlock {
     text: string;
     bbox: BBox;
     confidence: number;
 }
 
-// 渲染分组（用于擦除/渲染）
 export interface RenderGroup {
     bbox: BBox;
-    text: string; // 译文
-    blocks: TextBlock[]; // 原始块（用于估算字号等）
+    text: string;
+    blocks: TextBlock[];
 }
 
-// 边界框
 export interface BBox {
     x0: number;
     y0: number;
@@ -66,14 +65,12 @@ export interface BBox {
     y1: number;
 }
 
-// 翻译结果
 export interface TranslationResult {
     original: string;
     translated: string;
     engine: string;
 }
 
-// 缓存条目
 export interface CacheEntry {
     imageHash: string;
     timestamp: number;
@@ -82,14 +79,12 @@ export interface CacheEntry {
     renderedImage: string;
 }
 
-// 翻译进度
 export interface TranslationProgress {
     current: number;
     total: number;
     status: 'pending' | 'processing' | 'completed' | 'error';
 }
 
-// 阶段耗时
 export interface StageTimings {
     roiMs: number;
     ocrMs: number;
@@ -98,7 +93,6 @@ export interface StageTimings {
     totalMs: number;
 }
 
-// 单张图片翻译结果
 export interface ImageTranslationResult {
     originalSrc: string;
     renderedSrc?: string;
@@ -106,14 +100,12 @@ export interface ImageTranslationResult {
     timings: StageTimings;
 }
 
-// 批量翻译结果
 export interface BatchTranslationResult {
     success: number;
     failed: number;
     timings: StageTimings;
 }
 
-// 站点配置
 export interface SiteConfig {
     name: string;
     imageSelector: string;
@@ -126,5 +118,4 @@ export interface SiteConfig {
     };
 }
 
-// 悬浮球状态
 export type FloatingBallState = 'idle' | 'translating' | 'paused' | 'completed' | 'error';

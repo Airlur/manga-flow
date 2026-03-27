@@ -1,5 +1,3 @@
-// 漫译 MangaFlow - Toast 提示组件
-
 type ToastType = 'success' | 'error' | 'warning' | 'info';
 
 let toastContainer: HTMLElement | null = null;
@@ -17,38 +15,38 @@ function ensureContainer(): HTMLElement {
     return toastContainer;
 }
 
-export function showToast(message: string, type: ToastType = 'info', duration: number = 3000): void {
+export function showToast(message: string, type: ToastType = 'info', duration = 3000): void {
     const container = ensureContainer();
-
     const toast = document.createElement('div');
     toast.className = `manga-flow-toast manga-flow-toast--${type}`;
 
-    // 图标
     const icons: Record<ToastType, string> = {
-        success: '✓',
-        error: '✗',
-        warning: '⚠',
-        info: 'ℹ',
+        success: '?',
+        error: '?',
+        warning: '!',
+        info: 'i',
     };
 
-    toast.innerHTML = `
-    <span class="manga-flow-toast__icon">${icons[type]}</span>
-    <span class="manga-flow-toast__message">${message}</span>
-  `;
+    const icon = document.createElement('span');
+    icon.className = 'manga-flow-toast__icon';
+    icon.textContent = icons[type];
 
+    const text = document.createElement('span');
+    text.className = 'manga-flow-toast__message';
+    text.textContent = message;
+
+    toast.append(icon, text);
     container.appendChild(toast);
 
-    // 动画进入
     requestAnimationFrame(() => {
         toast.classList.add('manga-flow-toast--visible');
     });
 
-    // 自动消失
-    setTimeout(() => {
+    window.setTimeout(() => {
         toast.classList.remove('manga-flow-toast--visible');
         toast.classList.add('manga-flow-toast--hiding');
 
-        setTimeout(() => {
+        window.setTimeout(() => {
             toast.remove();
         }, 300);
     }, duration);

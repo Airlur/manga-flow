@@ -1,63 +1,68 @@
-{
-    "manifest_version": 3,
-    "name": "漫译 MangaFlow",
-    "version": "1.0.0",
-    "description": "漫画网页自动翻译插件 - 支持韩漫/日漫/英漫翻译",
-    "author": "MangaFlow",
-    "permissions": [
-        "storage",
-        "activeTab"
-    ],
-    "host_permissions": [
-        "https://comix.to/*",
-        "https://www.toongod.org/*",
-        "https://omegascans.org/*",
-        "https://manhwaread.com/*",
-        "https://*/*"
-    ],
-    "background": {
-        "service_worker": "dist/background/service-worker.js"
-    },
-    "content_scripts": [
-        {
-            "matches": [
-                "<all_urls>"
-            ],
-            "js": [
-                "dist/content/index.js"
-            ],
-            "css": [
-                "src/styles/content.css"
-            ],
-            "run_at": "document_idle"
-        }
-    ],
-    "action": {
-        "default_popup": "src/popup/popup.html",
-        "default_title": "漫译 MangaFlow",
-        "default_icon": {
-            "16": "icons/icon16.png",
-            "32": "icons/icon32.png",
-            "48": "icons/icon48.png",
-            "128": "icons/icon128.png"
-        }
-    },
-    "icons": {
-        "16": "icons/icon16.png",
-        "32": "icons/icon32.png",
-        "48": "icons/icon48.png",
-        "128": "icons/icon128.png"
-    },
-    "web_accessible_resources": [
-        {
-            "resources": [
-                "dist/*",
-                "icons/*",
-                "src/*"
-            ],
-            "matches": [
-                "<all_urls>"
-            ]
-        }
-    ]
+﻿{
+  "manifest_version": 3,
+  "name": "漫译 MangaFlow",
+  "version": "1.0.0",
+  "description": "漫画网页自动翻译插件 - 支持韩漫 / 日漫 / 英文漫画翻译",
+  "author": "MangaFlow",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://comix.to/*",
+    "https://www.toongod.org/*",
+    "https://omegascans.org/*",
+    "https://manhwaread.com/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "dist/background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "dist/content/index.js"
+      ],
+      "css": [
+        "src/styles/content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "漫译 MangaFlow",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "dist/*",
+        "dist/assets/*",
+        "src/assets/*",
+        "src/assets/ocr/*",
+        "src/assets/providers/*",
+        "icons/*",
+        "src/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }

@@ -159,7 +159,7 @@ export class OCREngine {
                 result = await this.recognizeWithTesseract(cropCanvas, lang);
             }
 
-            // ???????
+            // 将局部识别框坐标映射回整图
             result.blocks.forEach((block) => {
                 allBlocks.push({
                     text: block.text,

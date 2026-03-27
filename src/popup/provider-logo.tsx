@@ -7,7 +7,7 @@ interface PopupProviderLogoProps {
     provider: ProviderKey;
 }
 
-const openAiLogoUrl = new URL('./assets/openai-mark.svg', import.meta.url).href;
+const openAiLogoUrl = new URL('../assets/providers/openai-mark.svg', import.meta.url).href;
 
 function SvgIcon({
     path,

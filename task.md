@@ -3,6 +3,7 @@
 > 任务执行时同步勾选。新增任务请追加在最新版本下。
 
 版本记录
+- v0.7.3 (2026-03-27)：设置面板侧边栏 / 顶部标签切换；OpenAI 兼容多 provider 管理、自动拉取模型与手动补模落地。
 - v0.7.2 (2026-03-26)：Popup / 设置面板局部 React 化；统一字体 token、自定义控件与站点策略设置 UI。
 - v0.7.1 (2026-03-26)：贴边悬浮球交互收敛；补充 popup 恢复入口、原/译切换、阶段耗时与默认预检显示策略。
 - v0.7 (2026-03-23)：承接旧版本未完成项，新增 UI 重构、Provider 抽象、PaddleOCR、本地服务、LaMa、站点策略与 WebDAV 计划。
@@ -183,7 +184,7 @@
 - [ ] 承接旧项：过滤与遮罩解耦策略
 
 ### P2（可延后）
-- [ ] 构建产物路径收敛（`manifest.json` / popup / CSS）
+- [x] 构建产物路径收敛（新增 `dist-extension/`，可独立加载）
 - [ ] host 权限与内容脚本注入范围收敛
 - [ ] 站点适配配置数据化
 
@@ -228,9 +229,10 @@
 - [x] 用 Lucide / 品牌占位 glyph 替换 emoji 图标
 - [x] API Key 显隐按钮改为专业 icon（eye / eye-off）
 - [x] 完善微软 / DeepL / DeepLX / OpenAI 兼容 API 的表单与 helper text
-- [x] API Base URL 下方增加 `/chat/completions` 预览提示
-- [ ] 将 OpenAI 兼容 API 扩展为多提供商配置，而不是单套 `apiBaseUrl/apiKey/model`
+- [x] API Base URL 下方增加 `/v1/chat/completions` 预览提示
+- [x] 将 OpenAI 兼容 API 抽象升级为多提供商结构（完整管理 UI 在 v0.7.3 收口）
 - [x] 模型选择器第一版重做：获取列表、手输、统一样式合并（进一步的 provider 级管理延后）
+- [x] 新增 `dist-extension/` 最小扩展加载目录，避免继续直接加载整个项目根目录
 
 ### P1（重要优化）
 - [x] 加入站点运行策略设置（所有站点 / 白名单站点）
@@ -240,6 +242,30 @@
 - [x] 表单错误态 / 成功态 / loading 态统一设计
 - [ ] 暗色主题适配
 - [ ] 响应式和小屏细节优化
+
+---
+
+## v0.7.3 任务列表（设置面板侧边栏 + OpenAI 多 Provider）
+
+### P0（必须先做）
+- [x] 设置面板改为桌面端左侧栏导航、移动端顶部横向 tab
+- [x] `常规` tab 顺序对齐 Popup：原文语言 / 目标语言 / OCR / 翻译服务
+- [x] `翻译` tab 接入 OpenAI 兼容多 provider 管理
+- [x] 支持 provider 新增、删除、启停、优先级调整
+- [x] 填写 Base URL + API Key 后自动请求模型列表
+- [x] 支持手动添加模型、设置默认模型、删除模型
+- [x] background / translator 按启用 provider 顺序回退调用
+- [x] 修复本轮新增 UI 文案乱码，统一到 UTF-8 正常文本
+- [x] 统一 OCR / provider 图标资源目录，修复 popup / content 中 OCR 图标路径错误
+
+### P1（重要优化）
+- [ ] provider 优先级改为真正拖拽排序（当前先用上移 / 下移按钮）
+- [ ] 将 OCR 本地 `server/` 服务地址与健康检查正式接入设置面板
+- [ ] 小屏细节继续打磨（尤其 provider 面板在手机端的压缩布局）
+
+### P2（可延后）
+- [ ] provider 维度的失败次数 / 延迟统计展示
+- [ ] 为不同 provider 增加更细的标签与分组（如官方 / 自建 / 中转）
 
 ---
 

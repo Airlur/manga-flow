@@ -1,6 +1,7 @@
 ﻿# MangaFlow 方案与改进计划
 
 版本记录
+- v0.7.3 (2026-03-27)：设置面板改为侧边栏 / 顶部标签切换；补齐 OpenAI 兼容多 provider 管理、自动拉取模型与手动补模。
 - v0.7.2 (2026-03-26)：Popup / 设置面板局部 React 化落地；引入统一黑白灰 UI token、自定义下拉与字体继承收口。
 - v0.7.1 (2026-03-26)：贴边悬浮球交互收敛；补充 popup 恢复入口、原/译切换与阶段耗时反馈。
 - v0.7 (2026-03-23)：方案重评估；纳入 PaddleOCR/本地服务/LaMa/UI 重构/站点策略/WebDAV 同步计划。
@@ -12,7 +13,6 @@
 - v0.2 (2026-01-31)：加入 OCR 裁剪识别、气泡级聚类与修复渲染改进方案。
 - v0.1 (2026-01-31)：基于当前代码与最新反馈整理的阶段三修复与优化计划。
 
----
 
 ## 现有流程（当前代码实际流程）
 1) 图片检测：`ImageDetector` 过滤图片并监听懒加载。
@@ -504,31 +504,64 @@ packages:
 3) 新增统一黑白灰 UI token、自定义下拉、按钮、输入框、状态提示
 4) 修复 popup / 设置面板 / toast / 悬浮球的字体继承不一致问题
 5) 补齐设置面板中的：
-   - API Base URL `/chat/completions` 预览
+   - API Base URL `/v1/chat/completions` 预览
    - API Key 专业 eye / eye-off icon
    - Microsoft / DeepL / DeepLX / OpenAI 兼容 API helper text
    - 站点策略与白名单 UI
 6) `pnpm type-check`、`pnpm build` 已通过
 
-### 十三、v0.7.3 延续项：UI 细化与移动端交互风险
-本轮仍保留到后续版本的内容：
+### 十三、v0.7.3 延续项：移动端交互与后续收尾
+目前 v0.7.3 的 **设置面板侧边栏 + OpenAI 多 provider 管理** 已经落地，剩余延续到后续版本的主要是：
 
-1) **OpenAI 兼容多 provider 配置**
-   - 当前仍是单套 `apiBaseUrl / apiKey / model`
-   - 后续再拆成多提供商配置、切换与管理 UI
-
-2) **移动端悬浮球交互风险**
+1) **移动端悬浮球交互风险**
    - 当前桌面端依赖 hover 显示关闭入口，但移动端没有稳定 hover
    - 后续优先评估：
      - 默认收缩为 2 段式 `logo + ...`
      - 将关闭 / 原图译图切换 / 禁用站点操作收进 `...` 菜单
      - 桌面端是否也统一为更收缩结构
 
-3) **UI 深水区细化**
+2) **UI 深水区细化**
    - 暗色主题
    - 更强的样式隔离（如必要时再评估 Shadow DOM）
    - 小屏 / 响应式 / 视觉微调
 
 下一步继续：
-1) 进入 **v0.7.3**，继续补多 provider 管理与移动端 UI fallback
-2) 再进入 `server/` 本地 OCR 服务骨架与 `PP-OCRv5_mobile_det + korean_PP-OCRv5_mobile_rec` 最小闭环
+1) 收尾 **v0.7.x** 剩余 UI / 交互细节（移动端 fallback、小屏压缩、暗色主题评估）
+2) 进入 `server/` 本地 OCR 服务骨架与 `PP-OCRv5_mobile_det + korean_PP-OCRv5_mobile_rec` 最小闭环
+
+---
+
+## v0.7.3 当前落地方向（设置面板侧边栏 + OpenAI 多 Provider）
+
+### 本轮目标
+1) 设置面板不再走长列表滚动，改为：
+   - **桌面端**：左侧分类导航 + 右侧内容区
+   - **移动端**：顶部横向 tab + 单一内容滚动区
+2) `常规` tab 与 Popup 顺序保持一致：
+   - 原文语言
+   - 目标语言
+   - OCR
+   - 翻译服务
+3) `翻译` tab 正式接入 **OpenAI 兼容多 provider 管理**：
+   - 多服务商增删 / 启停 / 优先级调整
+   - Base URL + API Key 填写后自动拉取模型列表
+   - 支持手动补充模型
+   - 运行时按启用顺序失败回退
+
+### 本轮实现约束
+- 只重构 **Popup / 设置面板**，不改 OCR / 渲染主链路协议。
+- 样式继续沿用当前 **Vercel / shadcn 风格的黑白灰基础 + 少量强调色**。
+- 悬浮球维持原生实现，不在本轮 React 化。
+
+### 当前结果
+- 设置面板已切到 `常规 / OCR / 翻译 / 显示 / 站点 / 开发` 六类结构。
+- `翻译 > OpenAI 兼容 API` 已升级为 provider 面板式管理。
+- 默认兼容旧字段：旧版单 provider 配置会自动迁移到 `openaiProviders`。
+- background / translator 已改为按启用 provider 顺序测试与回退。
+- 新增 `dist-extension/` 最小可加载目录，用于替代直接加载整个项目根目录。
+- OCR / provider 业务图标资源目录已统一到：
+  - `src/assets/ocr/`
+  - `src/assets/providers/`
+- OCR 图标改为通过 `chrome.runtime.getURL(...)` 读取扩展静态资源，避免 popup / content 两侧路径不一致。
+
+---

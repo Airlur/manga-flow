@@ -1,4 +1,4 @@
-import {
+﻿import {
     AlertCircle,
     ArrowRightLeft,
     LoaderCircle,
@@ -12,6 +12,7 @@ import { createRoot } from 'react-dom/client';
 
 import { normalizeSettings } from '../config/default-settings';
 import { DropdownSelect } from '../shared/ui/dropdown-select';
+import { OcrEngineLogo } from '../shared/ui/ocr-engine-logo';
 import {
     POPUP_OCR_ENGINE_OPTIONS,
     POPUP_SOURCE_LANGUAGE_OPTIONS,
@@ -281,7 +282,13 @@ function PopupApp() {
                             options={POPUP_OCR_ENGINE_OPTIONS}
                             ariaLabel="OCR 引擎"
                             onChange={(nextValue) => void persistPartialSettings({ ocrEngine: nextValue })}
-                            renderSelected={(option) => <span className="mf-popup-select-label">{option.label}</span>}
+                            renderSelected={(option) => (
+                                <div className="mf-popup-provider-copy">
+                                    <OcrEngineLogo engine={option.value} />
+                                    <span className="mf-popup-select-label">{option.label}</span>
+                                </div>
+                            )}
+                            renderOptionLeading={(option) => <OcrEngineLogo engine={option.value} />}
                             size="compact"
                         />
                     </div>

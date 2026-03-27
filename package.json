@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm build:content && vite build --watch",
-    "build": "pnpm build:content && pnpm build:other",
+    "build": "pnpm build:content && pnpm build:other && pnpm package:extension",
     "build:content": "cross-env BUILD_TARGET=content vite build",
     "build:other": "vite build",
+    "package:extension": "node scripts/package-extension.mjs",
     "lint": "eslint src --ext .ts,.js",
     "type-check": "tsc --noEmit"
   },

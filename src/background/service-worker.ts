@@ -1,5 +1,5 @@
-// 漫译 MangaFlow - Service Worker
-// 处理 API 代理请求，绕过 CORS 限制
+﻿import { DEFAULT_SETTINGS, getPrimaryOpenAIProvider, normalizeSettings } from '../config/default-settings';
+import type { OpenAIProvider, Settings } from '../types';
 
 interface APIRequest {
     type: 'API_REQUEST' | 'TEST_TRANSLATION' | 'FETCH_IMAGE';
@@ -8,15 +8,7 @@ interface APIRequest {
     engine?: string;
     text?: string;
     imageUrl?: string;
-    settings?: {
-        sourceLang?: string;
-        targetLang?: string;
-        apiBaseUrl?: string;
-        apiKey?: string;
-        model?: string;
-        deeplxUrl?: string;
-        deeplApiKey?: string;
-    };
+    settings?: Partial<Settings>;
 }
 
 interface APIResponse {
@@ -27,7 +19,6 @@ interface APIResponse {
     error?: string;
 }
 
-// 监听来自内容脚本的消息
 chrome.runtime.onMessage.addListener(
     (request: APIRequest, _sender, sendResponse: (response: APIResponse) => void) => {
         if (request.type === 'API_REQUEST') {
@@ -38,44 +29,42 @@ chrome.runtime.onMessage.addListener(
         }
 
         if (request.type === 'TEST_TRANSLATION') {
-            handleTestTranslation(request.engine!, request.text!, request.settings!)
+            handleTestTranslation(request.engine!, request.text!, request.settings)
                 .then((translated) => sendResponse({ success: true, translated }))
                 .catch((error) => sendResponse({ success: false, error: error.message }));
             return true;
         }
 
-        // 图片代理：绕过 CORS 限制获取图片
         if (request.type === 'FETCH_IMAGE') {
             fetchImageAsBase64(request.imageUrl!)
                 .then((imageData) => sendResponse({ success: true, imageData }))
                 .catch((error) => sendResponse({ success: false, error: error.message }));
             return true;
         }
+
+        return false;
     }
 );
 
-// 处理 API 请求
 async function handleAPIRequest(url: string, options: RequestInit): Promise<unknown> {
     const response = await fetch(url, options);
 
     if (!response.ok) {
-        throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
+        throw new Error(`API 请求失败：${response.status} ${response.statusText}`);
     }
 
     return response.json();
 }
 
-// 获取图片并转换为 Base64（绕过 CORS）
 async function fetchImageAsBase64(imageUrl: string): Promise<string> {
     const response = await fetch(imageUrl);
 
     if (!response.ok) {
-        throw new Error(`图片获取失败: ${response.status}`);
+        throw new Error(`图片获取失败：${response.status}`);
     }
 
     const blob = await response.blob();
 
-    // 将 Blob 转换为 Base64
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
@@ -90,14 +79,14 @@ async function fetchImageAsBase64(imageUrl: string): Promise<string> {
     });
 }
 
-// 处理测试翻译请求
 async function handleTestTranslation(
     engine: string,
     text: string,
-    settings: APIRequest['settings']
+    settings?: Partial<Settings>
 ): Promise<string> {
-    const sourceLang = settings?.sourceLang || 'auto';
-    const targetLang = settings?.targetLang || 'zh';
+    const normalizedSettings = normalizeSettings(settings);
+    const sourceLang = normalizedSettings.sourceLang || 'auto';
+    const targetLang = normalizedSettings.targetLang || 'zh';
 
     switch (engine) {
         case 'microsoft':
@@ -105,20 +94,17 @@ async function handleTestTranslation(
         case 'google':
             return testGoogleTranslate(text, sourceLang, targetLang);
         case 'openai':
-            return testOpenAITranslate(text, settings!, sourceLang, targetLang);
+            return testOpenAITranslate(text, normalizedSettings, sourceLang, targetLang);
         case 'deeplx':
-            return testDeepLXTranslate(text, settings!);
+            return testDeepLXTranslate(text, normalizedSettings);
         case 'deepl':
-            return testDeepLTranslate(text, settings!);
+            return testDeepLTranslate(text, normalizedSettings);
         default:
             throw new Error('未知的翻译引擎');
     }
 }
 
-// 测试微软翻译
 async function testMicrosoftTranslate(text: string, sourceLang: string, targetLang: string): Promise<string> {
-    // 微软翻译免费 API（通过 Edge 翻译服务）
-    // 注意：这是一个公共 API，可能有频率限制
     const url = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${mapToMicrosoftLang(targetLang) || 'zh-Hans'}`;
 
     try {
@@ -131,27 +117,23 @@ async function testMicrosoftTranslate(text: string, sourceLang: string, targetLa
         });
 
         if (!response.ok) {
-            // 微软 API 需要 token，回退到 Google
-            console.warn('[MangaFlow] 微软翻译需要认证，回退到 Google 翻译');
+            console.warn('[MangaFlow] Microsoft Translator 当前未配置认证，回退到 Google Translate。');
             return testGoogleTranslate(text, sourceLang, targetLang);
         }
 
         const data = await response.json();
         return data[0]?.translations?.[0]?.text || '';
     } catch {
-        // 回退到 Google 翻译
         return testGoogleTranslate(text, sourceLang, targetLang);
     }
 }
 
-// 测试 Google 翻译
 async function testGoogleTranslate(text: string, sourceLang: string, targetLang: string): Promise<string> {
     const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${mapToGoogleLang(sourceLang) || 'auto'}&tl=${mapToGoogleLang(targetLang) || 'zh-CN'}&dt=t&q=${encodeURIComponent(text)}`;
-
     const response = await fetch(url);
 
     if (!response.ok) {
-        throw new Error('Google 翻译请求失败');
+        throw new Error('Google Translate 请求失败');
     }
 
     const data = await response.json();
@@ -160,59 +142,70 @@ async function testGoogleTranslate(text: string, sourceLang: string, targetLang:
         return data[0].map((item: unknown[]) => item[0]).join('');
     }
 
-    throw new Error('Google 翻译返回格式错误');
+    throw new Error('Google Translate 返回格式错误');
 }
 
-// 测试 OpenAI 兼容 API
 async function testOpenAITranslate(
     text: string,
-    settings: APIRequest['settings'],
+    settings: Settings,
     sourceLang: string,
     targetLang: string
 ): Promise<string> {
-    if (!settings?.apiBaseUrl || !settings?.apiKey) {
-        throw new Error('请先配置 API 地址和 Key');
+    const providers = getTestableOpenAIProviders(settings);
+
+    if (providers.length === 0) {
+        throw new Error('请先配置至少一个可用的 OpenAI 兼容服务商');
     }
 
-    const url = `${settings.apiBaseUrl}/chat/completions`;
+    let lastError: Error | null = null;
 
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${settings.apiKey}`,
-        },
-        body: JSON.stringify({
-            model: settings.model || 'gpt-4o-mini',
-            messages: [
-                {
-                    role: 'system',
-                    content: `你是一个翻译助手。请将用户输入的${getLanguageLabel(sourceLang)}文本翻译成${getLanguageLabel(targetLang)}。只输出翻译结果，不要解释。`,
+    for (const provider of providers) {
+        try {
+            const baseUrl = provider.apiBaseUrl.replace(/\/+$/, '');
+            const model = provider.model || settings.model;
+            if (!model) {
+                throw new Error('请先选择模型');
+            }
+            const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${provider.apiKey}`,
                 },
-                {
-                    role: 'user',
-                    content: text,
-                },
-            ],
-            max_tokens: 100,
-        }),
-    });
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        {
+                            role: 'system',
+                            content: `你是一个翻译助手。请将用户输入的${getLanguageLabel(sourceLang)}文本翻译成${getLanguageLabel(targetLang)}。只输出翻译结果，不要解释。`,
+                        },
+                        {
+                            role: 'user',
+                            content: text,
+                        },
+                    ],
+                    max_tokens: 100,
+                }),
+            });
 
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `API 请求失败: ${response.status}`);
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error?.message || `API 请求失败：${response.status}`);
+            }
+
+            const data = await response.json();
+            return data.choices?.[0]?.message?.content || '';
+        } catch (error) {
+            lastError = error as Error;
+            console.warn(`[MangaFlow] OpenAI 兼容服务商测试失败，尝试下一个：${provider.name}`, error);
+        }
     }
 
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || '';
+    throw lastError || new Error('OpenAI 兼容服务商测试失败');
 }
 
-// 测试 DeepLX
-async function testDeepLXTranslate(
-    text: string,
-    settings: APIRequest['settings']
-): Promise<string> {
-    if (!settings?.deeplxUrl) {
+async function testDeepLXTranslate(text: string, settings: Settings): Promise<string> {
+    if (!settings.deeplxUrl) {
         throw new Error('请先配置 DeepLX 服务地址');
     }
 
@@ -229,7 +222,7 @@ async function testDeepLXTranslate(
     });
 
     if (!response.ok) {
-        throw new Error(`DeepLX 请求失败: ${response.status}`);
+        throw new Error(`DeepLX 请求失败：${response.status}`);
     }
 
     const data = await response.json();
@@ -241,18 +234,12 @@ async function testDeepLXTranslate(
     return data.data || data.alternatives?.[0] || '';
 }
 
-// 测试 DeepL 官方 API
-async function testDeepLTranslate(
-    text: string,
-    settings: APIRequest['settings']
-): Promise<string> {
-    if (!settings?.deeplApiKey) {
+async function testDeepLTranslate(text: string, settings: Settings): Promise<string> {
+    if (!settings.deeplApiKey) {
         throw new Error('请先配置 DeepL API Key');
     }
 
-    const url = 'https://api-free.deepl.com/v2/translate';
-
-    const response = await fetch(url, {
+    const response = await fetch('https://api-free.deepl.com/v2/translate', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -266,45 +253,41 @@ async function testDeepLTranslate(
     });
 
     if (!response.ok) {
-        throw new Error(`DeepL API 请求失败: ${response.status}`);
+        throw new Error(`DeepL API 请求失败：${response.status}`);
     }
 
     const data = await response.json();
     return data.translations?.[0]?.text || '';
 }
 
-// 扩展安装/更新时的处理
+function getTestableOpenAIProviders(settings: Settings): OpenAIProvider[] {
+    const normalized = normalizeSettings(settings);
+    const enabledProviders = normalized.openaiProviders?.filter(
+        (provider) => provider.enabled && provider.apiBaseUrl && provider.apiKey
+    ) ?? [];
+
+    if (enabledProviders.length > 0) {
+        return enabledProviders;
+    }
+
+    const legacyProvider = getPrimaryOpenAIProvider(normalized);
+    if (legacyProvider && legacyProvider.apiBaseUrl && legacyProvider.apiKey) {
+        return [legacyProvider];
+    }
+
+    return [];
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {
-        console.log('漫译 MangaFlow 已安装');
-        // 初始化默认设置
+        console.log('漫画翻译 MangaFlow 已安装');
         chrome.storage.local.set({
-            settings: {
-                sourceLang: 'ko',
-                targetLang: 'zh',
-                translateEngine: 'google',
-                apiBaseUrl: '',
-                apiKey: '',
-                model: 'gpt-4o-mini',
-                deeplxUrl: '',
-                deeplApiKey: '',
-                fontSize: 14,
-                fontScale: 1.0,
-                fontColor: '#000000',
-                maskOpacity: 0.24,
-                ocrEngine: 'local',
-                cloudOcrKey: '',
-                devMode: true,
-                devPhase: 'roi',
-                showOcrBoxes: true,
-                showRoiBoxes: true,
-                showMaskBoxes: false,
-            },
+            settings: DEFAULT_SETTINGS,
         });
     }
 });
 
-console.log('漫译 MangaFlow Service Worker 已启动');
+console.log('漫画翻译 MangaFlow Service Worker 已启动');
 
 function mapToDeepLang(lang?: string): string | null {
     const langMap: Record<string, string> = {

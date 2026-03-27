@@ -393,6 +393,9 @@ button {
 .mf-select__popover {
   position: fixed;
   z-index: 100000000;
+  font-family: var(--mf-font-sans) !important;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 .mf-select__list {
@@ -406,6 +409,15 @@ button {
   box-shadow: var(--mf-shadow-popover);
   backdrop-filter: blur(10px);
   overflow-y: auto;
+  font-family: inherit !important;
+}
+
+.mf-select__group-label,
+.mf-select__option,
+.mf-select__option-label,
+.mf-select__selected-label,
+.mf-select__placeholder {
+  font-family: var(--mf-font-sans) !important;
 }
 
 .mf-select__list::-webkit-scrollbar {
@@ -501,6 +513,31 @@ button {
   width: 18px;
   height: 18px;
   display: block;
+}
+
+.mf-ocr-logo {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mf-ocr-logo__image {
+  width: 18px;
+  height: 18px;
+  display: block;
+  object-fit: contain;
+}
+
+.mf-ocr-logo__icon {
+  width: 18px;
+  height: 18px;
+}
+
+.mf-ocr-logo--local {
+  color: var(--mf-text-secondary);
 }
 
 .mf-popup-logo--deepl,
