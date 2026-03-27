@@ -565,3 +565,27 @@ packages:
 - OCR 图标改为通过 `chrome.runtime.getURL(...)` 读取扩展静态资源，避免 popup / content 两侧路径不一致。
 
 ---
+
+## v0.8.0 当前进度（本地 PaddleOCR 服务第一阶段）
+
+已完成基础落地：
+1) 新建 `server/` 目录骨架
+2) 初始化 FastAPI 服务入口
+3) 定义：
+   - `GET /health`
+   - `POST /ocr`
+   - `POST /ocr/batch`
+4) 增加 `PP-OCRv5_mobile_det` / `korean_PP-OCRv5_mobile_rec` 默认模型目录约定：
+   - `server/models/ppocr/det/PP-OCRv5_mobile_det`
+   - `server/models/ppocr/rec/korean_PP-OCRv5_mobile_rec`
+5) 增加模型下载脚本与服务端 README
+6) `pnpm-workspace.yaml` 已显式排除 `server/`
+
+当前仍待继续：
+1) 本机安装 Paddle / PaddleOCR 依赖并验证 GPU
+2) 下载两套模型到 `server/models/ppocr/...`
+3) 实测 `/health`
+4) 实测 `/ocr` 单图效果
+5) 确认后再接插件内 `paddle-local` OCR provider
+
+---

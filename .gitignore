@@ -4,3 +4,7 @@ dist-extension
 log-*.txt
 .dev/
 tmp-*.zip
+server/.venv/
+server/**/__pycache__/
+server/models/ppocr/det/PP-OCRv5_mobile_det/
+server/models/ppocr/rec/korean_PP-OCRv5_mobile_rec/

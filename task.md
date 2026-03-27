@@ -274,8 +274,8 @@
 > 已确认：这一阶段在 UI 重构之后执行，且先以 **2 模型最小闭环** 落地。
 
 ### P0（必须先做）
-- [ ] 新建 `server/` 本地服务骨架
-- [ ] 定义 `/health`、`/ocr`、`/ocr/batch` 接口
+- [x] 新建 `server/` 本地服务骨架
+- [x] 定义 `/health`、`/ocr`、`/ocr/batch` 接口
 - [ ] 接入本地 OCR provider：`paddle-local`
 - [ ] 第一阶段接入 2 模型组合：`PP-OCRv5_mobile_det + korean_PP-OCRv5_mobile_rec`
 - [ ] 支持自定义 `model_dir`，允许模型放 D 盘

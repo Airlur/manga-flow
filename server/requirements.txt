@@ -1,0 +1,11 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pillow>=10.4,<12.0
+numpy>=1.26,<3.0
+opencv-python>=4.10,<5.0
+python-multipart>=0.0.9,<1.0
+pydantic>=2.8,<3.0
+paddleocr>=3.0.0,<4.0.0
+# 说明：Paddle 需要按设备单独安装，因此这里不直接写死 paddlepaddle / paddlepaddle-gpu。
+# GPU 安装示例：python -m pip install paddlepaddle-gpu==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
+# CPU 安装示例：python -m pip install paddlepaddle==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
