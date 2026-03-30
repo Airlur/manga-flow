@@ -32,6 +32,7 @@ class PaddleOCRService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._lock = threading.Lock()
+        self._predict_lock = threading.Lock()
         self._ocr: Any | None = None
         self._load_error: str | None = None
         self._dependency_ready = True
@@ -73,9 +74,15 @@ class PaddleOCRService:
         image = self._decode_image(image_bytes)
         start = perf_counter()
 
-        raw_result = self._run_prediction(ocr, image)
-        blocks = self._normalize_result(raw_result)
-        total_ms = round((perf_counter() - start) * 1000, 2)
+        try:
+            with self._predict_lock:
+                raw_result = self._run_prediction(ocr, image)
+            blocks = self._normalize_result(raw_result)
+            total_ms = round((perf_counter() - start) * 1000, 2)
+        except OCRServiceError:
+            raise
+        except Exception as error:
+            raise OCRServiceError(f'PaddleOCR 推理失败：{error}') from error
 
         return {
             'text': '\n'.join(block['text'] for block in blocks),
@@ -274,13 +281,32 @@ class PaddleOCRService:
     def _polygon_to_points(self, polygon: Any) -> list[list[int]]:
         """将 polygon 转为整数坐标点列表。"""
         points: list[list[int]] = []
-        if polygon is None:
+        if polygon is None or isinstance(polygon, (str, bytes)):
             return points
 
         for point in polygon:
-            if not isinstance(point, (list, tuple)) or len(point) < 2:
+            if point is None or isinstance(point, (str, bytes)):
                 continue
-            points.append([int(round(point[0])), int(round(point[1]))])
+
+            if isinstance(point, (list, tuple)):
+                coords = point
+            elif hasattr(point, 'tolist'):
+                coords = point.tolist()
+            elif hasattr(point, '__iter__'):
+                coords = list(point)
+            else:
+                continue
+
+            if not isinstance(coords, (list, tuple)) or len(coords) < 2:
+                continue
+
+            try:
+                x = int(round(float(coords[0])))
+                y = int(round(float(coords[1])))
+            except (TypeError, ValueError, OverflowError):
+                continue
+
+            points.append([x, y])
 
         return points
 

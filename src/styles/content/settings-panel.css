@@ -728,6 +728,13 @@
   flex: 1;
 }
 
+.mf-select__option-trailing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .mf-select__option-label,
 .mf-select__selected-label {
   display: block;
@@ -741,6 +748,31 @@
   height: 16px;
   color: var(--mf-text-secondary);
   flex-shrink: 0;
+}
+
+.manga-flow-settings__status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.manga-flow-settings__status-icon--success {
+  color: #16a34a;
+}
+
+.manga-flow-settings__status-icon--error {
+  color: #dc2626;
+}
+
+.manga-flow-settings__status-icon--info {
+  color: var(--mf-text-secondary);
+}
+
+.manga-flow-settings__status-icon-spinner {
+  animation: mf-spin 1s linear infinite;
 }
 
 .mf-provider-glyph {
@@ -808,6 +840,16 @@
 .manga-flow-settings__inline-status--warning {
   background: var(--mf-warning-bg);
   color: var(--mf-warning-text);
+}
+
+@keyframes mf-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ===== 响应式 ===== */

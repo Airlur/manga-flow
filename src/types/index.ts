@@ -26,8 +26,9 @@ export interface Settings {
     fontColor: string;
     maskOpacity?: number;
 
-    ocrEngine: 'local' | 'cloud';
+    ocrEngine: 'local' | 'cloud' | 'paddle_local';
     cloudOcrKey: string;
+    paddleOcrServerUrl?: string;
     requestDelay?: number;
 
     devMode?: boolean;

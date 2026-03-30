@@ -21,6 +21,7 @@ interface DropdownSelectProps<T extends string> {
     size?: 'default' | 'compact';
     renderSelected?: (option: DropdownOption<T>) => ReactNode;
     renderOptionLeading?: (option: DropdownOption<T>, selected: boolean) => ReactNode;
+    renderOptionTrailing?: (option: DropdownOption<T>, selected: boolean) => ReactNode;
     className?: string;
 }
 
@@ -34,6 +35,7 @@ export function DropdownSelect<T extends string>({
     size = 'default',
     renderSelected,
     renderOptionLeading,
+    renderOptionTrailing,
     className = '',
 }: DropdownSelectProps<T>) {
     const listboxId = useId();
@@ -270,6 +272,11 @@ export function DropdownSelect<T extends string>({
                                         <span className="mf-select__option-description">{option.description}</span>
                                     ) : null}
                                 </span>
+                                {renderOptionTrailing ? (
+                                    <span className="mf-select__option-trailing">
+                                        {renderOptionTrailing(option, selected)}
+                                    </span>
+                                ) : null}
                                 {selected ? <Check className="mf-select__option-check" strokeWidth={2} /> : null}
                             </button>
                         </Fragment>

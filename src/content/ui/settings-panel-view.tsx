@@ -1,10 +1,13 @@
 import {
+    AlertCircle,
     Bug,
+    CircleCheck,
     Cloud,
     LayoutGrid,
     LoaderCircle,
     Palette,
     RefreshCw,
+    ScanText,
     Save,
     ShieldCheck,
     Sparkles,
@@ -12,7 +15,7 @@ import {
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 
-import { createOpenAIProvider, normalizeSettings } from '../../config/default-settings';
+import { createOpenAIProvider, DEFAULT_PADDLE_OCR_SERVER_URL, normalizeSettings } from '../../config/default-settings';
 import type { OpenAIProvider, Settings } from '../../types';
 import { DropdownSelect } from '../../shared/ui/dropdown-select';
 import { OcrEngineLogo } from '../../shared/ui/ocr-engine-logo';
@@ -40,7 +43,7 @@ import {
     TabIntro,
 } from './settings-panel-controls';
 
-type SettingsTabId = 'general' | 'ocr' | 'translate' | 'display' | 'site' | 'dev';
+type SettingsTabId = 'general' | 'ocr' | 'translate' | 'display' | 'site' | 'sync' | 'dev';
 
 interface SettingsPanelViewProps {
     visible: boolean;
@@ -79,6 +82,9 @@ export function SettingsPanelView({
     const [showDeepLKey, setShowDeepLKey] = useState(false);
     const [showCloudOcrKey, setShowCloudOcrKey] = useState(false);
     const [autoFetchSignatures, setAutoFetchSignatures] = useState<Record<string, string>>({});
+    const [paddleServiceState, setPaddleServiceState] = useState<InlineState | null>(null);
+    const [isCheckingPaddleService, setIsCheckingPaddleService] = useState(false);
+    const [autoCheckPaddleSignature, setAutoCheckPaddleSignature] = useState('');
 
     useEffect(() => {
         const nextSettings = normalizeSettings(initialSettings);
@@ -95,6 +101,9 @@ export function SettingsPanelView({
         setShowDeepLKey(false);
         setShowCloudOcrKey(false);
         setAutoFetchSignatures({});
+        setPaddleServiceState(null);
+        setIsCheckingPaddleService(false);
+        setAutoCheckPaddleSignature('');
     }, [initialSettings, renderKey]);
 
     useEffect(() => {
@@ -119,10 +128,11 @@ export function SettingsPanelView({
     const tabs = useMemo<SettingsTabItem[]>(() => {
         const baseTabs: SettingsTabItem[] = [
             { id: 'general', label: '常规', icon: <LayoutGrid size={16} strokeWidth={1.9} /> },
-            { id: 'ocr', label: 'OCR', icon: <Cloud size={16} strokeWidth={1.9} /> },
+            { id: 'ocr', label: 'OCR', icon: <ScanText size={16} strokeWidth={1.9} /> },
             { id: 'translate', label: '翻译', icon: <Sparkles size={16} strokeWidth={1.9} /> },
             { id: 'display', label: '显示', icon: <Palette size={16} strokeWidth={1.9} /> },
             { id: 'site', label: '站点', icon: <ShieldCheck size={16} strokeWidth={1.9} /> },
+            { id: 'sync', label: '同步', icon: <Cloud size={16} strokeWidth={1.9} /> },
         ];
 
         if (showDevTools) {
@@ -171,6 +181,19 @@ export function SettingsPanelView({
         autoFetchSignatures,
     ]);
 
+    useEffect(() => {
+        if (!visible || form.ocrEngine !== 'paddle_local') return;
+
+        const normalizedUrl = normalizePaddleServerUrl(form.paddleOcrServerUrl);
+        if (!normalizedUrl || autoCheckPaddleSignature === normalizedUrl) return;
+
+        const timer = window.setTimeout(() => {
+            void checkPaddleService('auto', normalizedUrl);
+        }, 280);
+
+        return () => window.clearTimeout(timer);
+    }, [visible, form.ocrEngine, form.paddleOcrServerUrl, autoCheckPaddleSignature]);
+
     if (!visible) return null;
 
     const updateField = <K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -181,6 +204,10 @@ export function SettingsPanelView({
 
         if (key === 'translateEngine') {
             setServiceTestState(null);
+        }
+
+        if (key === 'ocrEngine' && value !== 'paddle_local') {
+            setPaddleServiceState(null);
         }
     };
 
@@ -478,6 +505,57 @@ export function SettingsPanelView({
         }
     };
 
+    async function checkPaddleService(trigger: 'auto' | 'manual', overrideUrl?: string) {
+        const normalizedUrl = normalizePaddleServerUrl(overrideUrl ?? form.paddleOcrServerUrl);
+        if (!normalizedUrl) {
+            if (trigger === 'manual') {
+                setPaddleServiceState({ tone: 'error', message: '请填写服务地址' });
+            }
+            return;
+        }
+
+        setIsCheckingPaddleService(true);
+        setPaddleServiceState({ tone: 'info', message: '服务状态：检测中' });
+
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: 'API_REQUEST',
+                url: `${normalizedUrl}/health`,
+                timeoutMs: 3500,
+                options: {
+                    method: 'GET',
+                    cache: 'no-store',
+                },
+            });
+
+            if (!response?.success) {
+                throw new Error(response?.error || '服务检测失败');
+            }
+
+            const data = response.data as {
+                status?: string;
+                model_ready?: boolean;
+                dependency_ready?: boolean;
+            };
+
+            if (data?.status !== 'ok' || data?.dependency_ready !== true || data?.model_ready !== true) {
+                setPaddleServiceState({ tone: 'error', message: '服务状态：不可用' });
+            } else {
+                setPaddleServiceState({ tone: 'success', message: '服务状态：可用' });
+            }
+        } catch (error) {
+            setPaddleServiceState({
+                tone: 'error',
+                message: getPaddleServiceErrorMessage(error),
+            });
+        } finally {
+            setIsCheckingPaddleService(false);
+            if (trigger === 'auto') {
+                setAutoCheckPaddleSignature(normalizedUrl);
+            }
+        }
+    }
+
     const handleSave = () => {
         const fontScale = clampNumber(form.fontScale ?? 1, 0.85, 1.2);
         const maskOpacity = clampNumber(form.maskOpacity ?? 0.24, 0.15, 0.55);
@@ -507,6 +585,7 @@ export function SettingsPanelView({
             deeplxUrl: form.deeplxUrl.trim(),
             deeplApiKey: form.deeplApiKey.trim(),
             cloudOcrKey: form.cloudOcrKey.trim(),
+            paddleOcrServerUrl: normalizePaddleServerUrl(form.paddleOcrServerUrl),
             openaiProviders: normalizedProviders,
         }));
     };
@@ -533,7 +612,20 @@ export function SettingsPanelView({
                         <div className="manga-flow-settings__content manga-flow-settings__content--tabs">
                             <div className="manga-flow-settings__tab-pane">
                                 {activeTab === 'general' ? renderGeneralTab(form, updateField) : null}
-                                {activeTab === 'ocr' ? renderOcrTab(form, updateField, showCloudOcrKey, setShowCloudOcrKey) : null}
+                                {activeTab === 'ocr' ? renderOcrTab({
+                                    form,
+                                    showCloudOcrKey,
+                                    setShowCloudOcrKey,
+                                    paddleServiceState,
+                                    isCheckingPaddleService,
+                                    updateField,
+                                    onCheckPaddleService: () => void checkPaddleService('manual'),
+                                    onChangePaddleServerUrl: (value) => {
+                                        setPaddleServiceState(null);
+                                        setAutoCheckPaddleSignature('');
+                                        updateField('paddleOcrServerUrl', value);
+                                    },
+                                }) : null}
                                 {activeTab === 'translate' ? renderTranslateTab({
                                     form,
                                     currentProvider,
@@ -565,6 +657,7 @@ export function SettingsPanelView({
                                 }) : null}
                                 {activeTab === 'display' ? renderDisplayTab(form, updateField) : null}
                                 {activeTab === 'site' ? renderSiteTab(form, whitelistText, setWhitelistText, updateField) : null}
+                                {activeTab === 'sync' ? renderSyncTab() : null}
                                 {activeTab === 'dev' && showDevTools ? renderDevTab(form, updateField) : null}
                             </div>
                         </div>
@@ -615,12 +708,27 @@ function renderGeneralTab(form: Settings, updateField: <K extends keyof Settings
     );
 }
 
-function renderOcrTab(
-    form: Settings,
-    updateField: <K extends keyof Settings>(key: K, value: Settings[K]) => void,
-    showCloudOcrKey: boolean,
-    setShowCloudOcrKey: (value: boolean | ((current: boolean) => boolean)) => void
-) {
+function renderOcrTab(params: {
+    form: Settings;
+    updateField: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+    showCloudOcrKey: boolean;
+    setShowCloudOcrKey: (value: boolean | ((current: boolean) => boolean)) => void;
+    paddleServiceState: InlineState | null;
+    isCheckingPaddleService: boolean;
+    onCheckPaddleService: () => void;
+    onChangePaddleServerUrl: (value: string) => void;
+}) {
+    const {
+        form,
+        updateField,
+        showCloudOcrKey,
+        setShowCloudOcrKey,
+        paddleServiceState,
+        isCheckingPaddleService,
+        onCheckPaddleService,
+        onChangePaddleServerUrl,
+    } = params;
+
     return (
         <>
             <TabIntro title="OCR" />
@@ -635,9 +743,15 @@ function renderOcrTab(
                             <div className="manga-flow-settings__provider-select">
                                 <OcrEngineLogo engine={option.value} />
                                 <span className="manga-flow-settings__compact-select">{option.label}</span>
+                                {option.value === 'paddle_local' ? renderPaddleServiceStatusIcon(paddleServiceState, isCheckingPaddleService) : null}
                             </div>
                         )}
                         renderOptionLeading={(option) => <OcrEngineLogo engine={option.value} />}
+                        renderOptionTrailing={(option) => (
+                            option.value === 'paddle_local'
+                                ? renderPaddleServiceStatusIcon(paddleServiceState, isCheckingPaddleService)
+                                : null
+                        )}
                     />
                 </Field>
             </PaneSection>
@@ -664,9 +778,38 @@ function renderOcrTab(
                         />
                     </Field>
                 </PaneSection>
+            ) : null}
+            {form.ocrEngine === 'paddle_local' ? (
+                <PaneSection title="PaddleOCR 本地服务">
+                    <div className="manga-flow-settings__stack">
+                        <Field label="服务地址">
+                            <input
+                                className="manga-flow-settings__input"
+                                type="text"
+                                placeholder={DEFAULT_PADDLE_OCR_SERVER_URL}
+                                value={form.paddleOcrServerUrl ?? DEFAULT_PADDLE_OCR_SERVER_URL}
+                                onChange={(event) => onChangePaddleServerUrl(event.target.value)}
+                            />
+                        </Field>
+                        <Field label="服务检测">
+                            <div className="manga-flow-settings__inline-actions">
+                                <button
+                                    type="button"
+                                    className="mf-button mf-button--secondary"
+                                    onClick={onCheckPaddleService}
+                                    disabled={isCheckingPaddleService}
+                                >
+                                    {isCheckingPaddleService ? <LoaderCircle className="mf-button__spinner" size={15} /> : <RefreshCw size={15} strokeWidth={1.8} />}
+                                    <span>{paddleServiceState ? '重新检测' : '检测服务'}</span>
+                                </button>
+                                <InlineStatus state={paddleServiceState ?? { tone: 'warning', message: '服务状态：未检测' }} />
+                            </div>
+                        </Field>
+                    </div>
+                </PaneSection>
             ) : (
-                <PaneSection title="本地 OCR">
-                    <InfoBlock tone="info">本地 OCR 暂无额外配置。</InfoBlock>
+                <PaneSection title="Tesseract OCR">
+                    <InfoBlock tone="info">Tesseract OCR 当前无需额外配置。</InfoBlock>
                 </PaneSection>
             )}
         </>
@@ -857,6 +1000,18 @@ function renderSiteTab(
         </>
     );
 }
+
+function renderSyncTab() {
+    return (
+        <>
+            <TabIntro title="同步" />
+            <PaneSection title="WebDAV 同步">
+                <InfoBlock tone="info">WebDAV 同步即将支持。</InfoBlock>
+            </PaneSection>
+        </>
+    );
+}
+
 function renderDevTab(form: Settings, updateField: <K extends keyof Settings>(key: K, value: Settings[K]) => void) {
     return (
         <>
@@ -978,6 +1133,59 @@ function getShortRequestErrorMessage(error: unknown, mode: 'test' | 'models'): s
     }
 
     return `${prefix}，请稍后重试`;
+}
+
+function normalizePaddleServerUrl(url?: string): string {
+    const rawValue = (url || '').trim();
+    return (rawValue || DEFAULT_PADDLE_OCR_SERVER_URL).replace(/\/+$/, '');
+}
+
+function getPaddleServiceErrorMessage(error: unknown): string {
+    const message = typeof error === 'string'
+        ? error
+        : error instanceof Error
+            ? error.message
+            : '';
+
+    if (/超时|timeout/i.test(message)) {
+        return '服务状态：连接超时';
+    }
+
+    if (/failed to fetch|networkerror|load failed/i.test(message)) {
+        return '服务状态：连接失败';
+    }
+
+    return '服务状态：不可用';
+}
+
+function renderPaddleServiceStatusIcon(state: InlineState | null, checking: boolean): ReactNode {
+    if (checking) {
+        return (
+            <span className="manga-flow-settings__status-icon manga-flow-settings__status-icon--info" aria-hidden="true">
+                <LoaderCircle className="manga-flow-settings__status-icon-spinner" size={15} strokeWidth={1.9} />
+            </span>
+        );
+    }
+
+    if (!state) return null;
+
+    if (state.tone === 'success') {
+        return (
+            <span className="manga-flow-settings__status-icon manga-flow-settings__status-icon--success" aria-hidden="true">
+                <CircleCheck size={15} strokeWidth={2.1} />
+            </span>
+        );
+    }
+
+    if (state.tone === 'error') {
+        return (
+            <span className="manga-flow-settings__status-icon manga-flow-settings__status-icon--error" aria-hidden="true">
+                <AlertCircle size={15} strokeWidth={2.1} />
+            </span>
+        );
+    }
+
+    return null;
 }
 
 function clampNumber(value: number, min: number, max: number): number {

@@ -8,7 +8,7 @@ import type { OCRResult } from '../../types';
 interface OCRCacheEntry {
     imageHash: string;
     timestamp: number;
-    ocrEngine: 'local' | 'cloud';
+    ocrEngine: 'local' | 'cloud' | 'paddle_local';
     ocrResult: OCRResult;
 }
 
@@ -54,7 +54,7 @@ export class CacheManager {
      * @param imageSrc 图片 URL
      * @param ocrEngine OCR 引擎类型
      */
-    async getOCR(imageSrc: string, ocrEngine: 'local' | 'cloud'): Promise<OCRResult | null> {
+    async getOCR(imageSrc: string, ocrEngine: 'local' | 'cloud' | 'paddle_local'): Promise<OCRResult | null> {
         try {
             const hash = await this.getImageHash(imageSrc);
             const key = `${hash}_${ocrEngine}`;
@@ -79,7 +79,7 @@ export class CacheManager {
     /**
      * 设置 OCR 缓存
      */
-    async setOCR(imageSrc: string, ocrEngine: 'local' | 'cloud', ocrResult: OCRResult): Promise<void> {
+    async setOCR(imageSrc: string, ocrEngine: 'local' | 'cloud' | 'paddle_local', ocrResult: OCRResult): Promise<void> {
         try {
             const hash = await this.getImageHash(imageSrc);
             const key = `${hash}_${ocrEngine}`;

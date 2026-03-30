@@ -6,6 +6,7 @@
 - `korean_PP-OCRv5_mobile_rec`
 - `GET /health`
 - `POST /ocr`
+- `POST /ocr/json`
 - `POST /ocr/batch`
 
 当前目标是先把**韩漫识别链路稳定跑通**，并为后续接入插件里的**本地 OCR 引擎**做准备。
@@ -89,6 +90,14 @@ uvicorn app.main:app --host 127.0.0.1 --port 18733 --reload
 
 表单字段：
 - `file`：单张图片文件，支持 `jpg/png/webp/bmp`
+
+### JSON OCR
+
+- `POST /ocr/json`
+
+请求体字段：
+- `imageBase64`：不带前缀或带 data URL 前缀的图片 base64
+- `filename`：可选，仅用于日志标识
 
 ### 批量 OCR
 

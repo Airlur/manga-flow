@@ -1,6 +1,7 @@
 import type { OpenAIProvider, Settings } from '../types';
 
 const DEFAULT_OPENAI_MODEL = '';
+export const DEFAULT_PADDLE_OCR_SERVER_URL = 'http://127.0.0.1:18733';
 const LEGACY_PROVIDER_NAME_PATTERNS = [/\?/];
 
 function createProviderId(index: number): string {
@@ -98,6 +99,7 @@ export const DEFAULT_SETTINGS: Settings = {
     maskOpacity: 0.24,
     ocrEngine: 'local',
     cloudOcrKey: '',
+    paddleOcrServerUrl: DEFAULT_PADDLE_OCR_SERVER_URL,
     requestDelay: 0,
     devMode: true,
     devPhase: 'roi',
@@ -120,6 +122,7 @@ export function normalizeSettings(settings?: Partial<Settings>): Settings {
         model: primaryProvider?.model || normalizeModelName(settings?.model) || DEFAULT_OPENAI_MODEL,
         openaiProviders,
         targetLang: settings?.targetLang || DEFAULT_SETTINGS.targetLang,
+        paddleOcrServerUrl: settings?.paddleOcrServerUrl?.trim() || DEFAULT_SETTINGS.paddleOcrServerUrl,
         sitePolicy: settings?.sitePolicy || DEFAULT_SETTINGS.sitePolicy,
         siteWhitelist: Array.isArray(settings?.siteWhitelist) ? settings.siteWhitelist : [],
     };

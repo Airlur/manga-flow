@@ -1,8 +1,8 @@
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from app.schemas import OCRResponse
+from app.schemas import OCRImageRequest, OCRResponse
 from app.services.paddle_ocr_service import OCRServiceError, get_paddle_ocr_service
-from app.utils.image_io import read_upload_image
+from app.utils.image_io import decode_base64_image, read_upload_image
 
 # OCR 接口路由。
 router = APIRouter(tags=['OCR'])
@@ -12,6 +12,20 @@ router = APIRouter(tags=['OCR'])
 async def ocr(file: UploadFile = File(...)) -> OCRResponse:
     """处理单张图片 OCR。"""
     image_bytes = await read_upload_image(file)
+    service = get_paddle_ocr_service()
+
+    try:
+        result = service.predict(image_bytes)
+    except OCRServiceError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+    return OCRResponse(**result)
+
+
+@router.post('/ocr/json', response_model=OCRResponse)
+def ocr_json(payload: OCRImageRequest) -> OCRResponse:
+    """处理 base64 JSON 图片 OCR。"""
+    image_bytes = decode_base64_image(payload.imageBase64)
     service = get_paddle_ocr_service()
 
     try:

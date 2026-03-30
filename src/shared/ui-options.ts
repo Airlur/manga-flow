@@ -51,14 +51,16 @@ export const POPUP_TRANSLATION_ENGINE_OPTIONS: AppOption<'microsoft' | 'google' 
     { value: 'deeplx', label: 'DeepLX', group: '常规翻译' },
 ];
 
-export const POPUP_OCR_ENGINE_OPTIONS: AppOption<'local' | 'cloud'>[] = [
-    { value: 'local', label: '本地 OCR' },
-    { value: 'cloud', label: 'Google Vision' },
+export const POPUP_OCR_ENGINE_OPTIONS: AppOption<'local' | 'cloud' | 'paddle_local'>[] = [
+    { value: 'cloud', label: 'Google Vision', group: '云端 OCR' },
+    { value: 'local', label: 'Tesseract OCR', group: '本地 OCR' },
+    { value: 'paddle_local', label: 'PaddleOCR 本地服务', group: '本地 OCR' },
 ];
 
-export const OCR_ENGINE_OPTIONS: AppOption<'local' | 'cloud'>[] = [
-    { value: 'local', label: '本地 OCR' },
-    { value: 'cloud', label: 'Google Cloud Vision' },
+export const OCR_ENGINE_OPTIONS: AppOption<'local' | 'cloud' | 'paddle_local'>[] = [
+    { value: 'cloud', label: 'Google Cloud Vision', group: '云端 OCR' },
+    { value: 'local', label: 'Tesseract OCR', group: '本地 OCR' },
+    { value: 'paddle_local', label: 'PaddleOCR 本地服务', group: '本地 OCR' },
 ];
 
 export const SITE_POLICY_OPTIONS: AppOption<'auto_detect' | 'whitelist_only' | 'always_show'>[] = [

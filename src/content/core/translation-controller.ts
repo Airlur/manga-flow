@@ -66,7 +66,7 @@ export class TranslationController {
         await this.loadSettings();
         // 配置 OCR 引擎
         this.ocrEngine.configure(this.settings || {});
-        if (this.settings?.ocrEngine !== 'cloud') {
+        if (this.settings?.ocrEngine === 'local') {
             await this.ocrEngine.initLocal(this.settings?.sourceLang || 'ko');
         }
 

@@ -1,12 +1,13 @@
 // 漫译 MangaFlow - OCR 引擎模块
-// 支持本地 (Tesseract.js) 和云端 (Google Cloud Vision) 两种模式
+// 支持本地 Tesseract、云端 Google Vision、本地 PaddleOCR 服务三种模式
 // 阶段1：仅做文本区域检测和 OCR 识别验证
 
 import Tesseract from 'tesseract.js';
 import type { OCRResult, TextBlock, Settings } from '../../types';
+import { DEFAULT_PADDLE_OCR_SERVER_URL } from '../../config/default-settings';
 import { DebugOverlayManager } from './debug-overlay';
 
-export type OCREngineType = 'local' | 'cloud';
+export type OCREngineType = 'local' | 'cloud' | 'paddle_local';
 
 export class OCREngine {
     // Tesseract 相关
@@ -17,6 +18,7 @@ export class OCREngine {
     // 配置
     private engineType: OCREngineType = 'local';
     private cloudApiKey = '';
+    private paddleServerUrl = DEFAULT_PADDLE_OCR_SERVER_URL;
     private debugMode = true; // 阶段1：调试模式，显示红框
 
     // 文本检测阈值配置
@@ -45,7 +47,10 @@ export class OCREngine {
         if (settings.cloudOcrKey) {
             this.cloudApiKey = settings.cloudOcrKey;
         }
-        console.log(`[MangaFlow] OCR 引擎: ${this.engineType === 'cloud' ? '☁️ Google Cloud Vision' : '💻 本地 Tesseract'}`);
+        if (settings.paddleOcrServerUrl) {
+            this.paddleServerUrl = settings.paddleOcrServerUrl.trim() || DEFAULT_PADDLE_OCR_SERVER_URL;
+        }
+        console.log(`[MangaFlow] OCR 引擎: ${this.getEngineLabel()}`);
     }
 
     /**
@@ -93,6 +98,8 @@ export class OCREngine {
 
         if (this.engineType === 'cloud' && this.cloudApiKey) {
             result = await this.recognizeWithGoogleVision(image, filename);
+        } else if (this.engineType === 'paddle_local') {
+            result = await this.recognizeWithPaddleLocal(image, filename);
         } else {
             result = await this.recognizeWithTesseract(image, lang);
         }
@@ -155,6 +162,8 @@ export class OCREngine {
                         result = altResult;
                     }
                 }
+            } else if (this.engineType === 'paddle_local') {
+                result = await this.recognizeWithPaddleLocal(cropCanvas, name);
             } else {
                 result = await this.recognizeWithTesseract(cropCanvas, lang);
             }
@@ -319,6 +328,77 @@ export class OCREngine {
             text: annotations[0]?.description || '',
             confidence: 0.95,
             blocks: mergedBlocks,
+        };
+    }
+
+    private async recognizeWithPaddleLocal(
+        image: HTMLImageElement | HTMLCanvasElement,
+        filename?: string
+    ): Promise<OCRResult> {
+        const baseUrl = this.paddleServerUrl.trim().replace(/\/+$/, '');
+        if (!baseUrl) {
+            throw new Error('请先配置 PaddleOCR 服务地址');
+        }
+
+        const logName = filename || 'Image';
+        console.log(`[MangaFlow] 🐳 调用本地 PaddleOCR 服务 [${logName}]...`);
+
+        const base64 = await this.imageToBase64(image);
+        const response = await chrome.runtime.sendMessage({
+            type: 'API_REQUEST',
+            url: `${baseUrl}/ocr/json`,
+            timeoutMs: 15000,
+            options: {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    imageBase64: base64,
+                    filename: logName,
+                }),
+            },
+        });
+
+        if (!response?.success) {
+            throw new Error(response?.error || 'PaddleOCR 服务请求失败');
+        }
+
+        const data = response.data as {
+            text?: string;
+            blocks?: Array<{
+                text?: string;
+                score?: number;
+                bbox?: { x0?: number; y0?: number; x1?: number; y1?: number };
+            }>;
+        };
+
+        const blocks = (data?.blocks || [])
+            .map((block) => {
+                const text = block?.text?.trim() || '';
+                if (!text) return null;
+
+                return {
+                    text,
+                    confidence: Number(block.score ?? 0),
+                    bbox: {
+                        x0: Number(block.bbox?.x0 ?? 0),
+                        y0: Number(block.bbox?.y0 ?? 0),
+                        x1: Number(block.bbox?.x1 ?? 0),
+                        y1: Number(block.bbox?.y1 ?? 0),
+                    },
+                } satisfies TextBlock;
+            })
+            .filter((block): block is TextBlock => Boolean(block));
+
+        const confidence = blocks.length > 0
+            ? blocks.reduce((sum, block) => sum + block.confidence, 0) / blocks.length
+            : 0;
+
+        return {
+            text: data?.text || blocks.map((block) => block.text).join('\n'),
+            confidence,
+            blocks,
         };
     }
 
@@ -575,12 +655,31 @@ export class OCREngine {
         this.debugMode = enabled;
     }
 
+    private getEngineLabel(): string {
+        switch (this.engineType) {
+            case 'cloud':
+                return '☁️ Google Cloud Vision';
+            case 'paddle_local':
+                return '🐳 PaddleOCR 本地服务';
+            default:
+                return '🖥️ 本地 Tesseract';
+        }
+    }
+
     getEngineType(): OCREngineType {
         return this.engineType;
     }
 
     isInitialized(): boolean {
-        return this.engineType === 'cloud' ? !!this.cloudApiKey : this.tessInitialized;
+        if (this.engineType === 'cloud') {
+            return !!this.cloudApiKey;
+        }
+
+        if (this.engineType === 'paddle_local') {
+            return !!this.paddleServerUrl.trim();
+        }
+
+        return this.tessInitialized;
     }
 
     async destroy(): Promise<void> {

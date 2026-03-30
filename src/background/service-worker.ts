@@ -5,6 +5,7 @@ interface APIRequest {
     type: 'API_REQUEST' | 'TEST_TRANSLATION' | 'FETCH_IMAGE';
     url?: string;
     options?: RequestInit;
+    timeoutMs?: number;
     engine?: string;
     text?: string;
     imageUrl?: string;
@@ -22,7 +23,7 @@ interface APIResponse {
 chrome.runtime.onMessage.addListener(
     (request: APIRequest, _sender, sendResponse: (response: APIResponse) => void) => {
         if (request.type === 'API_REQUEST') {
-            handleAPIRequest(request.url!, request.options!)
+            handleAPIRequest(request.url!, request.options!, request.timeoutMs)
                 .then((data) => sendResponse({ success: true, data }))
                 .catch((error) => sendResponse({ success: false, error: error.message }));
             return true;
@@ -46,14 +47,34 @@ chrome.runtime.onMessage.addListener(
     }
 );
 
-async function handleAPIRequest(url: string, options: RequestInit): Promise<unknown> {
-    const response = await fetch(url, options);
+async function handleAPIRequest(url: string, options: RequestInit = {}, timeoutMs = 15000): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (!response.ok) {
-        throw new Error(`API 请求失败：${response.status} ${response.statusText}`);
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            throw new Error(`API 请求失败：${response.status} ${response.statusText}`);
+        }
+
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            return response.json();
+        }
+
+        return response.text();
+    } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new Error('请求超时');
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
     }
-
-    return response.json();
 }
 
 async function fetchImageAsBase64(imageUrl: string): Promise<string> {

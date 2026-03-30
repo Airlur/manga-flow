@@ -26,6 +26,13 @@ class HealthResponse(BaseModel):
     load_error: str | None = None
 
 
+class OCRImageRequest(BaseModel):
+    """JSON 方式提交的 OCR 请求。"""
+
+    imageBase64: str
+    filename: str | None = None
+
+
 class OCRBox(BaseModel):
     """矩形包围框。"""
 
