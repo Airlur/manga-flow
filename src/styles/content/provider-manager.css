@@ -369,6 +369,29 @@
   transition: all 0.18s ease;
 }
 
+.manga-flow-settings__accent-btn svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.manga-flow-settings__accent-btn span {
+  display: block;
+  line-height: 1;
+}
+
+.manga-flow-settings__provider-add-btn {
+  align-items: center;
+  gap: 6px;
+}
+
+.manga-flow-settings__provider-add-btn svg {
+  transform: translateY(-0.5px);
+}
+
+.manga-flow-settings__provider-add-btn span {
+  transform: translateY(-1px);
+}
+
 .manga-flow-settings__mini-icon-btn {
   width: 38px;
   padding: 0;

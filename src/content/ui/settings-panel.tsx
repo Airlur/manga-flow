@@ -9,6 +9,8 @@ import { SettingsPanelView } from './settings-panel-view';
 interface SettingsPanelOptions {
     onSave: (settings: Settings) => void;
     onClose: () => void;
+    onClearOCRCache: () => Promise<void>;
+    onClearTranslationCache: () => Promise<void>;
 }
 
 export class SettingsPanel {
@@ -67,6 +69,8 @@ export class SettingsPanel {
                 renderKey={this.renderKey}
                 showDevTools={DEV_MODE}
                 onClose={() => this.hide()}
+                onClearOCRCache={this.options.onClearOCRCache}
+                onClearTranslationCache={this.options.onClearTranslationCache}
                 onSave={(settings) => {
                     this.options.onSave(settings);
                     this.hide();

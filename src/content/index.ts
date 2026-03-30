@@ -81,6 +81,8 @@ class MangaFlow {
 
         this.settingsPanel = new SettingsPanel({
             onSave: (settings) => this.saveSettings(settings),
+            onClearOCRCache: () => this.clearOCRCache(),
+            onClearTranslationCache: () => this.clearTranslationCache(),
             onClose: () => {
                 console.log('[MangaFlow] 设置面板已关闭');
             },
@@ -127,10 +129,8 @@ class MangaFlow {
             }
 
             if (message.type === 'CLEAR_CACHE') {
-                this.translationController?.clearCache()
+                this.clearCaches()
                     .then(() => {
-                        this.translatedImages.clear();
-                        console.log('[MangaFlow] 缓存已清空（OCR/翻译）');
                         sendResponse({ success: true });
                     })
                     .catch((error) => {
@@ -522,6 +522,23 @@ class MangaFlow {
         await chrome.storage.local.set({
             floatingBallPrefs: this.floatingBallPrefs,
         });
+    }
+
+    private async clearCaches(): Promise<void> {
+        await this.translationController?.clearCache();
+        this.translatedImages.clear();
+        this.translatedImageRecords.clear();
+        console.log('[MangaFlow] 缓存已清空（OCR/翻译）');
+    }
+
+    private async clearOCRCache(): Promise<void> {
+        await this.translationController?.clearOCRCache();
+        console.log('[MangaFlow] OCR 缓存已清空');
+    }
+
+    private async clearTranslationCache(): Promise<void> {
+        await this.translationController?.clearTranslationCache();
+        console.log('[MangaFlow] 翻译缓存已清空');
     }
 
     private async saveSettings(settings: unknown): Promise<void> {

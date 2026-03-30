@@ -51,6 +51,8 @@ interface SettingsPanelViewProps {
     renderKey: number;
     showDevTools: boolean;
     onClose: () => void;
+    onClearOCRCache: () => Promise<void>;
+    onClearTranslationCache: () => Promise<void>;
     onSave: (settings: Settings) => void;
 }
 
@@ -66,6 +68,8 @@ export function SettingsPanelView({
     renderKey,
     showDevTools,
     onClose,
+    onClearOCRCache,
+    onClearTranslationCache,
     onSave,
 }: SettingsPanelViewProps) {
     const [activeTab, setActiveTab] = useState<SettingsTabId>('general');
@@ -85,6 +89,8 @@ export function SettingsPanelView({
     const [paddleServiceState, setPaddleServiceState] = useState<InlineState | null>(null);
     const [isCheckingPaddleService, setIsCheckingPaddleService] = useState(false);
     const [autoCheckPaddleSignature, setAutoCheckPaddleSignature] = useState('');
+    const [isClearingOcrCache, setIsClearingOcrCache] = useState(false);
+    const [isClearingTranslationCache, setIsClearingTranslationCache] = useState(false);
 
     useEffect(() => {
         const nextSettings = normalizeSettings(initialSettings);
@@ -104,6 +110,8 @@ export function SettingsPanelView({
         setPaddleServiceState(null);
         setIsCheckingPaddleService(false);
         setAutoCheckPaddleSignature('');
+        setIsClearingOcrCache(false);
+        setIsClearingTranslationCache(false);
     }, [initialSettings, renderKey]);
 
     useEffect(() => {
@@ -505,6 +513,38 @@ export function SettingsPanelView({
         }
     };
 
+    const handleClearOcrCache = async () => {
+        const confirmed = window.confirm('确定要清除 OCR 缓存吗？');
+        if (!confirmed) return;
+
+        setIsClearingOcrCache(true);
+        try {
+            await onClearOCRCache();
+            showToast('OCR 缓存已清除', 'success');
+        } catch (error) {
+            console.error('[MangaFlow] 清除 OCR 缓存失败:', error);
+            showToast('清除 OCR 缓存失败，请稍后重试', 'error');
+        } finally {
+            setIsClearingOcrCache(false);
+        }
+    };
+
+    const handleClearTranslationCache = async () => {
+        const confirmed = window.confirm('确定要清除翻译缓存吗？');
+        if (!confirmed) return;
+
+        setIsClearingTranslationCache(true);
+        try {
+            await onClearTranslationCache();
+            showToast('翻译缓存已清除', 'success');
+        } catch (error) {
+            console.error('[MangaFlow] 清除翻译缓存失败:', error);
+            showToast('清除翻译缓存失败，请稍后重试', 'error');
+        } finally {
+            setIsClearingTranslationCache(false);
+        }
+    };
+
     async function checkPaddleService(trigger: 'auto' | 'manual', overrideUrl?: string) {
         const normalizedUrl = normalizePaddleServerUrl(overrideUrl ?? form.paddleOcrServerUrl);
         if (!normalizedUrl) {
@@ -611,7 +651,14 @@ export function SettingsPanelView({
                     <div className="manga-flow-settings__main">
                         <div className="manga-flow-settings__content manga-flow-settings__content--tabs">
                             <div className="manga-flow-settings__tab-pane">
-                                {activeTab === 'general' ? renderGeneralTab(form, updateField) : null}
+                                {activeTab === 'general' ? renderGeneralTab(
+                                    form,
+                                    updateField,
+                                    handleClearOcrCache,
+                                    handleClearTranslationCache,
+                                    isClearingOcrCache,
+                                    isClearingTranslationCache
+                                ) : null}
                                 {activeTab === 'ocr' ? renderOcrTab({
                                     form,
                                     showCloudOcrKey,
@@ -678,7 +725,14 @@ export function SettingsPanelView({
     );
 }
 
-function renderGeneralTab(form: Settings, updateField: <K extends keyof Settings>(key: K, value: Settings[K]) => void) {
+function renderGeneralTab(
+    form: Settings,
+    updateField: <K extends keyof Settings>(key: K, value: Settings[K]) => void,
+    onClearOcrCache: () => void,
+    onClearTranslationCache: () => void,
+    isClearingOcrCache: boolean,
+    isClearingTranslationCache: boolean
+) {
     return (
         <>
             <TabIntro title="常规" />
@@ -701,6 +755,36 @@ function renderGeneralTab(form: Settings, updateField: <K extends keyof Settings
                             onChange={(value) => updateField('targetLang', value)}
                             renderSelected={(option) => <span className="manga-flow-settings__compact-select">{option.label}</span>}
                         />
+                    </Field>
+                </div>
+            </PaneSection>
+            <PaneSection title="缓存">
+                <div className="manga-flow-settings__stack">
+                    <Field label="OCR 缓存" helper="清除后会重新请求 OCR，适合重新验证坐标和识别结果。">
+                        <div className="manga-flow-settings__inline-actions">
+                            <button
+                                type="button"
+                                className="mf-button mf-button--secondary"
+                                onClick={onClearOcrCache}
+                                disabled={isClearingOcrCache}
+                            >
+                                {isClearingOcrCache ? <LoaderCircle className="mf-button__spinner" size={15} /> : <RefreshCw size={15} strokeWidth={1.8} />}
+                                <span>{isClearingOcrCache ? '清除中…' : '清除 OCR 缓存'}</span>
+                            </button>
+                        </div>
+                    </Field>
+                    <Field label="翻译缓存" helper="清除后会重新请求翻译，适合回归测试不同模型或提示词结果。">
+                        <div className="manga-flow-settings__inline-actions">
+                            <button
+                                type="button"
+                                className="mf-button mf-button--secondary"
+                                onClick={onClearTranslationCache}
+                                disabled={isClearingTranslationCache}
+                            >
+                                {isClearingTranslationCache ? <LoaderCircle className="mf-button__spinner" size={15} /> : <RefreshCw size={15} strokeWidth={1.8} />}
+                                <span>{isClearingTranslationCache ? '清除中…' : '清除翻译缓存'}</span>
+                            </button>
+                        </div>
                     </Field>
                 </div>
             </PaneSection>

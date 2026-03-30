@@ -213,6 +213,22 @@ export class CacheManager {
     }
 
     /**
+     * 清空 OCR 缓存
+     */
+    async clearOCR(): Promise<void> {
+        await this.ocrStore.clear();
+        console.log('[MangaFlow] OCR 缓存已清空');
+    }
+
+    /**
+     * 清空翻译缓存
+     */
+    async clearTranslation(): Promise<void> {
+        await this.translationStore.clear();
+        console.log('[MangaFlow] 翻译缓存已清空');
+    }
+
+    /**
      * 获取缓存大小（估算）
      */
     async getSize(): Promise<{ ocr: number; translation: number; total: number }> {

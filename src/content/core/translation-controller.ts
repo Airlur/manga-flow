@@ -412,6 +412,14 @@ export class TranslationController {
         await this.cacheManager.clear();
     }
 
+    async clearOCRCache(): Promise<void> {
+        await this.cacheManager.clearOCR();
+    }
+
+    async clearTranslationCache(): Promise<void> {
+        await this.cacheManager.clearTranslation();
+    }
+
     updateSettings(settings: Settings): void {
         this.settings = settings;
     }

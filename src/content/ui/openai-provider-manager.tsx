@@ -205,7 +205,7 @@ export function OpenAIProviderManager({
                     </div>
                     <button
                         type="button"
-                        className="manga-flow-settings__accent-btn"
+                        className="manga-flow-settings__accent-btn manga-flow-settings__provider-add-btn"
                         onClick={onAddProvider}
                     >
                         <Plus size={15} strokeWidth={2} />
