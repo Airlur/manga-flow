@@ -8,11 +8,25 @@ import { TranslationController } from './core/translation-controller';
 import { DebugOverlayManager } from './core/debug-overlay';
 import { showToast } from './ui/toast';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../config/default-settings';
+import { normalizeWebDAVConfig } from '../config/webdav-defaults';
+import {
+    createSyncSnapshot,
+    deleteWebDAVBackup,
+    listWebDAVBackups,
+    pullLatestSnapshot,
+    pushSyncSnapshot,
+    restoreBackupSnapshot,
+    testWebDAVConnection,
+} from './core/webdav-sync';
 import type {
+    FloatingBallPrefs,
     Settings,
     StageTimings,
     ImageTranslationResult,
     FloatingBallState,
+    SyncSnapshot,
+    WebDAVBackupItem,
+    WebDAVConfig,
 } from '../types';
 
 type ViewMode = 'original' | 'translated';
@@ -20,11 +34,6 @@ type ViewMode = 'original' | 'translated';
 interface TranslatedImageRecord {
     originalSrc: string;
     translatedSrc: string;
-}
-
-interface FloatingBallPrefs {
-    globallyDisabled: boolean;
-    disabledSites: string[];
 }
 
 class MangaFlow {
@@ -49,6 +58,9 @@ class MangaFlow {
         globallyDisabled: false,
         disabledSites: [],
     };
+    private webdavConfig: WebDAVConfig = normalizeWebDAVConfig();
+    private webdavAutoSyncTimer: number | null = null;
+    private isApplyingRemoteSync = false;
 
     constructor() {
         this.init();
@@ -69,6 +81,7 @@ class MangaFlow {
         console.log('漫译 MangaFlow 初始化中...');
         this.settings = await this.loadStoredSettings();
         this.floatingBallPrefs = await this.loadFloatingBallPrefs();
+        this.webdavConfig = await this.loadWebDAVConfig();
 
         this.floatingBall = new FloatingBall({
             onStart: () => this.startTranslation(),
@@ -78,9 +91,15 @@ class MangaFlow {
             onDisableGlobal: () => this.disableGlobally(),
             onToggleView: () => this.toggleViewMode(),
         });
-
         this.settingsPanel = new SettingsPanel({
             onSave: (settings) => this.saveSettings(settings),
+            onSaveWebDAVConfig: (config) => this.saveWebDAVConfig(config),
+            onTestWebDAV: (config) => this.testWebDAV(config),
+            onPushWebDAV: (config, settings) => this.pushWebDAV(config, settings),
+            onPullWebDAV: (config) => this.pullWebDAV(config),
+            onListWebDAVBackups: (config) => this.listWebDAVBackups(config),
+            onRestoreWebDAVBackup: (config, fileName) => this.restoreWebDAVBackup(config, fileName),
+            onDeleteWebDAVBackup: (config, fileName) => this.deleteWebDAVBackup(config, fileName),
             onClearOCRCache: () => this.clearOCRCache(),
             onClearTranslationCache: () => this.clearTranslationCache(),
             onClose: () => {
@@ -518,17 +537,132 @@ class MangaFlow {
         }
     }
 
+    private async loadWebDAVConfig(): Promise<WebDAVConfig> {
+        try {
+            const result = await chrome.storage.local.get('webdavConfig');
+            return normalizeWebDAVConfig(result.webdavConfig as Partial<WebDAVConfig> | undefined);
+        } catch (error) {
+            console.error('[MangaFlow] 读取 WebDAV 配置失败:', error);
+            return normalizeWebDAVConfig();
+        }
+    }
+
+    private async saveWebDAVConfig(config: Partial<WebDAVConfig>): Promise<void> {
+        const normalized = normalizeWebDAVConfig(config);
+        const persistedConfig: WebDAVConfig = normalized.rememberPassword
+            ? normalized
+            : {
+                ...normalized,
+                password: '',
+            };
+
+        await chrome.storage.local.set({ webdavConfig: persistedConfig });
+        this.webdavConfig = normalized;
+
+        if (!normalized.autoSync) {
+            this.clearWebDAVAutoSyncTimer();
+        }
+    }
+
+    private async testWebDAV(config: Partial<WebDAVConfig>): Promise<void> {
+        await testWebDAVConnection(normalizeWebDAVConfig(config));
+    }
+
+    private async pushWebDAV(
+        config: Partial<WebDAVConfig>,
+        settings: Settings = this.settings
+    ): Promise<{ fileName: string }> {
+        const snapshot = createSyncSnapshot(normalizeSettings(settings), this.floatingBallPrefs);
+        return pushSyncSnapshot(normalizeWebDAVConfig(config), snapshot);
+    }
+
+    private async pullWebDAV(config: Partial<WebDAVConfig>): Promise<SyncSnapshot> {
+        const snapshot = await pullLatestSnapshot(normalizeWebDAVConfig(config));
+        await this.applySyncSnapshot(snapshot);
+        return snapshot;
+    }
+
+    private async listWebDAVBackups(config: Partial<WebDAVConfig>): Promise<WebDAVBackupItem[]> {
+        return listWebDAVBackups(normalizeWebDAVConfig(config));
+    }
+
+    private async restoreWebDAVBackup(config: Partial<WebDAVConfig>, fileName: string): Promise<SyncSnapshot> {
+        const snapshot = await restoreBackupSnapshot(normalizeWebDAVConfig(config), fileName);
+        await this.applySyncSnapshot(snapshot);
+        return snapshot;
+    }
+
+    private async deleteWebDAVBackup(config: Partial<WebDAVConfig>, fileName: string): Promise<void> {
+        await deleteWebDAVBackup(normalizeWebDAVConfig(config), fileName);
+    }
+
+    private async applySyncSnapshot(snapshot: SyncSnapshot): Promise<void> {
+        this.isApplyingRemoteSync = true;
+
+        try {
+            const normalizedSettings = normalizeSettings(snapshot.settings);
+            const normalizedPrefs: FloatingBallPrefs = {
+                globallyDisabled: Boolean(snapshot.floatingBallPrefs?.globallyDisabled),
+                disabledSites: Array.isArray(snapshot.floatingBallPrefs?.disabledSites)
+                    ? snapshot.floatingBallPrefs.disabledSites
+                    : [],
+            };
+
+            this.settings = normalizedSettings;
+            this.floatingBallPrefs = normalizedPrefs;
+            this.floatingBallHiddenForTab = false;
+
+            await chrome.storage.local.set({
+                settings: normalizedSettings,
+                floatingBallPrefs: normalizedPrefs,
+            });
+
+            DebugOverlayManager.getInstance().applySettings(this.settings);
+            this.translationController?.updateSettings(this.settings);
+            this.applyFloatingBallVisibility();
+        } finally {
+            this.isApplyingRemoteSync = false;
+        }
+    }
+
     private async persistFloatingBallPrefs(): Promise<void> {
         await chrome.storage.local.set({
             floatingBallPrefs: this.floatingBallPrefs,
         });
+
+        this.scheduleWebDAVAutoSync();
+    }
+
+    private scheduleWebDAVAutoSync(): void {
+        if (this.isApplyingRemoteSync) return;
+
+        this.clearWebDAVAutoSyncTimer();
+
+        const { autoSync, syncDelaySeconds, serverUrl, username, password } = this.webdavConfig;
+        if (!autoSync || !serverUrl || !username || !password) {
+            return;
+        }
+
+        this.webdavAutoSyncTimer = window.setTimeout(() => {
+            this.webdavAutoSyncTimer = null;
+            void this.pushWebDAV(this.webdavConfig).catch((error) => {
+                console.warn('[MangaFlow] WebDAV 自动同步失败:', error);
+            });
+        }, Math.max(1, syncDelaySeconds) * 1000);
+    }
+
+    private clearWebDAVAutoSyncTimer(): void {
+        if (this.webdavAutoSyncTimer !== null) {
+            window.clearTimeout(this.webdavAutoSyncTimer);
+            this.webdavAutoSyncTimer = null;
+        }
     }
 
     private async clearCaches(): Promise<void> {
         await this.translationController?.clearCache();
         this.translatedImages.clear();
         this.translatedImageRecords.clear();
-        console.log('[MangaFlow] 缓存已清空（OCR/翻译）');
+        console.log('[MangaFlow] 缓存已清空（OCR / 翻译）');
     }
 
     private async clearOCRCache(): Promise<void> {
@@ -544,11 +678,13 @@ class MangaFlow {
     private async saveSettings(settings: unknown): Promise<void> {
         this.settings = normalizeSettings(settings as Partial<Settings>);
         await chrome.storage.local.set({ settings: this.settings });
-        console.log('设置已保存:', this.settings);
+        console.log('[MangaFlow] 设置已保存:', this.settings);
         DebugOverlayManager.getInstance().applySettings(this.settings);
         this.translationController?.updateSettings(this.settings);
         this.applyFloatingBallVisibility();
+        this.scheduleWebDAVAutoSync();
     }
+
 }
 
 new MangaFlow();

@@ -8,6 +8,37 @@ export interface OpenAIProvider {
     enabled: boolean;
 }
 
+export interface FloatingBallPrefs {
+    globallyDisabled: boolean;
+    disabledSites: string[];
+}
+
+export interface WebDAVConfig {
+    serverUrl: string;
+    username: string;
+    password: string;
+    rememberPassword: boolean;
+    autoSync: boolean;
+    syncDelaySeconds: number;
+    backupLimit: number;
+}
+
+export interface SyncSnapshot {
+    schemaVersion: number;
+    app: 'MangaFlow';
+    exportedAt: string;
+    settings: Settings;
+    floatingBallPrefs: FloatingBallPrefs;
+}
+
+export interface WebDAVBackupItem {
+    fileName: string;
+    label: string;
+    lastModified?: string;
+    size?: number;
+    isLatest?: boolean;
+}
+
 export interface Settings {
     sourceLang: 'ko' | 'ja' | 'en' | 'zh' | 'auto';
     targetLang: 'ko' | 'ja' | 'en' | 'zh';

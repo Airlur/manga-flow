@@ -3,20 +3,25 @@ import {
     Bug,
     CircleCheck,
     Cloud,
+    Download,
     LayoutGrid,
     LoaderCircle,
     Palette,
     RefreshCw,
+    RotateCcw,
     ScanText,
     Save,
     ShieldCheck,
     Sparkles,
+    Trash2,
+    Upload,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { createOpenAIProvider, DEFAULT_PADDLE_OCR_SERVER_URL, normalizeSettings } from '../../config/default-settings';
-import type { OpenAIProvider, Settings } from '../../types';
+import { normalizeWebDAVConfig } from '../../config/webdav-defaults';
+import type { OpenAIProvider, Settings, SyncSnapshot, WebDAVBackupItem, WebDAVConfig } from '../../types';
 import { DropdownSelect } from '../../shared/ui/dropdown-select';
 import { OcrEngineLogo } from '../../shared/ui/ocr-engine-logo';
 import {
@@ -48,12 +53,20 @@ type SettingsTabId = 'general' | 'ocr' | 'translate' | 'display' | 'site' | 'syn
 interface SettingsPanelViewProps {
     visible: boolean;
     initialSettings: Settings;
+    initialWebDAVConfig: WebDAVConfig;
     renderKey: number;
     showDevTools: boolean;
     onClose: () => void;
     onClearOCRCache: () => Promise<void>;
     onClearTranslationCache: () => Promise<void>;
-    onSave: (settings: Settings) => void;
+    onSaveWebDAVConfig: (config: WebDAVConfig) => Promise<void>;
+    onTestWebDAV: (config: WebDAVConfig) => Promise<void>;
+    onPushWebDAV: (config: WebDAVConfig, settings: Settings) => Promise<{ fileName: string }>;
+    onPullWebDAV: (config: WebDAVConfig) => Promise<SyncSnapshot>;
+    onListWebDAVBackups: (config: WebDAVConfig) => Promise<WebDAVBackupItem[]>;
+    onRestoreWebDAVBackup: (config: WebDAVConfig, fileName: string) => Promise<SyncSnapshot>;
+    onDeleteWebDAVBackup: (config: WebDAVConfig, fileName: string) => Promise<void>;
+    onSave: (settings: Settings) => void | Promise<void>;
 }
 
 interface SettingsTabItem {
@@ -65,11 +78,19 @@ interface SettingsTabItem {
 export function SettingsPanelView({
     visible,
     initialSettings,
+    initialWebDAVConfig,
     renderKey,
     showDevTools,
     onClose,
     onClearOCRCache,
     onClearTranslationCache,
+    onSaveWebDAVConfig,
+    onTestWebDAV,
+    onPushWebDAV,
+    onPullWebDAV,
+    onListWebDAVBackups,
+    onRestoreWebDAVBackup,
+    onDeleteWebDAVBackup,
     onSave,
 }: SettingsPanelViewProps) {
     const [activeTab, setActiveTab] = useState<SettingsTabId>('general');
@@ -91,11 +112,23 @@ export function SettingsPanelView({
     const [autoCheckPaddleSignature, setAutoCheckPaddleSignature] = useState('');
     const [isClearingOcrCache, setIsClearingOcrCache] = useState(false);
     const [isClearingTranslationCache, setIsClearingTranslationCache] = useState(false);
+    const [webdavForm, setWebdavForm] = useState<WebDAVConfig>(initialWebDAVConfig);
+    const [webdavView, setWebdavView] = useState<'config' | 'history'>('config');
+    const [showWebDAVPassword, setShowWebDAVPassword] = useState(false);
+    const [isTestingWebDAV, setIsTestingWebDAV] = useState(false);
+    const [isPushingWebDAV, setIsPushingWebDAV] = useState(false);
+    const [isPullingWebDAV, setIsPullingWebDAV] = useState(false);
+    const [isLoadingWebDAVHistory, setIsLoadingWebDAVHistory] = useState(false);
+    const [webdavHistory, setWebdavHistory] = useState<WebDAVBackupItem[]>([]);
+    const [webdavStatus, setWebdavStatus] = useState<InlineState | null>(null);
+    const [activeWebDAVBackupFile, setActiveWebDAVBackupFile] = useState('');
 
     useEffect(() => {
         const nextSettings = normalizeSettings(initialSettings);
         setActiveTab('general');
         setForm(nextSettings);
+        setWebdavForm(normalizeWebDAVConfig(initialWebDAVConfig));
+        setWebdavView('config');
         setWhitelistText(formatWhitelist(nextSettings.siteWhitelist));
         setServiceTestState(null);
         setProviderFeedback({});
@@ -112,7 +145,15 @@ export function SettingsPanelView({
         setAutoCheckPaddleSignature('');
         setIsClearingOcrCache(false);
         setIsClearingTranslationCache(false);
-    }, [initialSettings, renderKey]);
+        setShowWebDAVPassword(false);
+        setIsTestingWebDAV(false);
+        setIsPushingWebDAV(false);
+        setIsPullingWebDAV(false);
+        setIsLoadingWebDAVHistory(false);
+        setWebdavHistory([]);
+        setWebdavStatus(null);
+        setActiveWebDAVBackupFile('');
+    }, [initialSettings, initialWebDAVConfig, renderKey]);
 
     useEffect(() => {
         if (!visible) return;
@@ -201,6 +242,11 @@ export function SettingsPanelView({
 
         return () => window.clearTimeout(timer);
     }, [visible, form.ocrEngine, form.paddleOcrServerUrl, autoCheckPaddleSignature]);
+
+    useEffect(() => {
+        if (!visible || activeTab !== 'sync' || webdavView !== 'history') return;
+        void refreshWebDAVHistory(false);
+    }, [visible, activeTab, webdavView]);
 
     if (!visible) return null;
 
@@ -545,6 +591,107 @@ export function SettingsPanelView({
         }
     };
 
+    const updateWebDAVField = <K extends keyof WebDAVConfig>(key: K, value: WebDAVConfig[K]) => {
+        setWebdavForm((current) => normalizeWebDAVConfig({
+            ...current,
+            [key]: value,
+        }));
+    };
+
+    const handleTestWebDAV = async () => {
+        setIsTestingWebDAV(true);
+        setWebdavStatus({ tone: 'info', message: '正在测试连接…' });
+
+        try {
+            await onTestWebDAV(webdavForm);
+            setWebdavStatus({ tone: 'success', message: '连接成功' });
+        } catch (error) {
+            setWebdavStatus({ tone: 'error', message: getShortWebDAVErrorMessage(error, 'test') });
+        } finally {
+            setIsTestingWebDAV(false);
+        }
+    };
+
+    const handlePushWebDAV = async () => {
+        setIsPushingWebDAV(true);
+
+        try {
+            await onPushWebDAV(webdavForm, normalizeSettings(form));
+            showToast('已推送到 WebDAV', 'success');
+            if (webdavView === 'history') {
+                await refreshWebDAVHistory(false);
+            }
+        } catch (error) {
+            showToast(getShortWebDAVErrorMessage(error, 'push'), 'error');
+        } finally {
+            setIsPushingWebDAV(false);
+        }
+    };
+
+    const handlePullWebDAV = async () => {
+        setIsPullingWebDAV(true);
+
+        try {
+            const snapshot = await onPullWebDAV(webdavForm);
+            const normalizedSettings = normalizeSettings(snapshot.settings);
+            setForm(normalizedSettings);
+            setSelectedProviderId(normalizedSettings.openaiProviders?.[0]?.id || '');
+            setWhitelistText(formatWhitelist(normalizedSettings.siteWhitelist));
+        } catch (error) {
+            showToast(getShortWebDAVErrorMessage(error, 'pull'), 'error');
+        } finally {
+            setIsPullingWebDAV(false);
+        }
+    };
+
+    const handleRestoreWebDAVBackup = async (fileName: string) => {
+        setActiveWebDAVBackupFile(`restore:${fileName}`);
+
+        try {
+            const snapshot = await onRestoreWebDAVBackup(webdavForm, fileName);
+            const normalizedSettings = normalizeSettings(snapshot.settings);
+            setForm(normalizedSettings);
+            setSelectedProviderId(normalizedSettings.openaiProviders?.[0]?.id || '');
+            setWhitelistText(formatWhitelist(normalizedSettings.siteWhitelist));
+        } catch (error) {
+            showToast(getShortWebDAVErrorMessage(error, 'restore'), 'error');
+        } finally {
+            setActiveWebDAVBackupFile('');
+        }
+    };
+
+    const handleDeleteWebDAVBackup = async (fileName: string) => {
+        const confirmed = window.confirm(`确定删除历史版本“${fileName}”吗？`);
+        if (!confirmed) return;
+
+        setActiveWebDAVBackupFile(`delete:${fileName}`);
+        try {
+            await onDeleteWebDAVBackup(webdavForm, fileName);
+            setWebdavHistory((current) => current.filter((item) => item.fileName !== fileName));
+        } catch (error) {
+            showToast(getShortWebDAVErrorMessage(error, 'delete'), 'error');
+        } finally {
+            setActiveWebDAVBackupFile('');
+        }
+    };
+
+    async function refreshWebDAVHistory(_manual: boolean) {
+        setIsLoadingWebDAVHistory(true);
+
+        try {
+            const items = await onListWebDAVBackups(webdavForm);
+            setWebdavHistory(items);
+            if (_manual) {
+                showToast('备份列表已刷新', 'success');
+            }
+        } catch (error) {
+            setWebdavHistory([]);
+            showToast(getShortWebDAVErrorMessage(error, 'history'), 'error');
+        } finally {
+            setIsLoadingWebDAVHistory(false);
+        }
+    }
+
     async function checkPaddleService(trigger: 'auto' | 'manual', overrideUrl?: string) {
         const normalizedUrl = normalizePaddleServerUrl(overrideUrl ?? form.paddleOcrServerUrl);
         if (!normalizedUrl) {
@@ -596,7 +743,7 @@ export function SettingsPanelView({
         }
     }
 
-    const handleSave = () => {
+    const handleSave = async () => {
         const fontScale = clampNumber(form.fontScale ?? 1, 0.85, 1.2);
         const maskOpacity = clampNumber(form.maskOpacity ?? 0.24, 0.15, 0.55);
         const requestDelay = Math.max(0, Number(form.requestDelay) || 0);
@@ -615,7 +762,7 @@ export function SettingsPanelView({
             return;
         }
 
-        onSave(normalizeSettings({
+        const normalizedSettings = normalizeSettings({
             ...form,
             fontScale,
             fontSize: Math.round(fontScale * 14),
@@ -627,7 +774,15 @@ export function SettingsPanelView({
             cloudOcrKey: form.cloudOcrKey.trim(),
             paddleOcrServerUrl: normalizePaddleServerUrl(form.paddleOcrServerUrl),
             openaiProviders: normalizedProviders,
-        }));
+        });
+
+        try {
+            await onSaveWebDAVConfig(webdavForm);
+            await onSave(normalizedSettings);
+        } catch (error) {
+            console.error('[MangaFlow] 保存 WebDAV 配置失败:', error);
+            showToast('保存 WebDAV 配置失败，请稍后重试', 'error');
+        }
     };
 
     return (
@@ -704,7 +859,27 @@ export function SettingsPanelView({
                                 }) : null}
                                 {activeTab === 'display' ? renderDisplayTab(form, updateField) : null}
                                 {activeTab === 'site' ? renderSiteTab(form, whitelistText, setWhitelistText, updateField) : null}
-                                {activeTab === 'sync' ? renderSyncTab() : null}
+                                {activeTab === 'sync' ? renderSyncTab({
+                                    webdavForm,
+                                    webdavView,
+                                    showPassword: showWebDAVPassword,
+                                    webdavStatus,
+                                    isTestingWebDAV,
+                                    isPushingWebDAV,
+                                    isPullingWebDAV,
+                                    isLoadingWebDAVHistory,
+                                    webdavHistory,
+                                    activeWebDAVBackupFile,
+                                    onChangeView: setWebdavView,
+                                    onChangeField: updateWebDAVField,
+                                    onTogglePassword: () => setShowWebDAVPassword((current) => !current),
+                                    onTest: () => void handleTestWebDAV(),
+                                    onPush: () => void handlePushWebDAV(),
+                                    onPull: () => void handlePullWebDAV(),
+                                    onRefreshHistory: () => void refreshWebDAVHistory(true),
+                                    onRestoreBackup: (fileName) => void handleRestoreWebDAVBackup(fileName),
+                                    onDeleteBackup: (fileName) => void handleDeleteWebDAVBackup(fileName),
+                                }) : null}
                                 {activeTab === 'dev' && showDevTools ? renderDevTab(form, updateField) : null}
                             </div>
                         </div>
@@ -713,7 +888,7 @@ export function SettingsPanelView({
                             <button type="button" className="mf-button mf-button--secondary" onClick={onClose}>
                                 取消
                             </button>
-                            <button type="button" className="mf-button mf-button--primary" onClick={handleSave}>
+                            <button type="button" className="mf-button mf-button--primary" onClick={() => void handleSave()}>
                                 <Save size={15} strokeWidth={1.9} />
                                 <span>保存设置</span>
                             </button>
@@ -1085,12 +1260,214 @@ function renderSiteTab(
     );
 }
 
-function renderSyncTab() {
+function renderSyncTab(params: {
+    webdavForm: WebDAVConfig;
+    webdavView: 'config' | 'history';
+    showPassword: boolean;
+    webdavStatus: InlineState | null;
+    isTestingWebDAV: boolean;
+    isPushingWebDAV: boolean;
+    isPullingWebDAV: boolean;
+    isLoadingWebDAVHistory: boolean;
+    webdavHistory: WebDAVBackupItem[];
+    activeWebDAVBackupFile: string;
+    onChangeView: (view: 'config' | 'history') => void;
+    onChangeField: <K extends keyof WebDAVConfig>(key: K, value: WebDAVConfig[K]) => void;
+    onTogglePassword: () => void;
+    onTest: () => void;
+    onPush: () => void;
+    onPull: () => void;
+    onRefreshHistory: () => void;
+    onRestoreBackup: (fileName: string) => void;
+    onDeleteBackup: (fileName: string) => void;
+}) {
+    const {
+        webdavForm,
+        webdavView,
+        showPassword,
+        webdavStatus,
+        isTestingWebDAV,
+        isPushingWebDAV,
+        isPullingWebDAV,
+        isLoadingWebDAVHistory,
+        webdavHistory,
+        activeWebDAVBackupFile,
+        onChangeView,
+        onChangeField,
+        onTogglePassword,
+        onTest,
+        onPush,
+        onPull,
+        onRefreshHistory,
+        onRestoreBackup,
+        onDeleteBackup,
+    } = params;
+
+    const backupItems = webdavHistory.filter((item) => !item.isLatest);
+    const latestBackupFileName = backupItems[0]?.fileName || '';
+
     return (
         <>
             <TabIntro title="同步" />
-            <PaneSection title="WebDAV 同步">
-                <InfoBlock tone="info">WebDAV 同步即将支持。</InfoBlock>
+            <PaneSection title="WebDAV">
+                <div className="manga-flow-settings__sync-segment">
+                    <button
+                        type="button"
+                        className={`manga-flow-settings__sync-segment-btn ${webdavView === 'config' ? 'is-active' : ''}`.trim()}
+                        onClick={() => onChangeView('config')}
+                    >
+                        配置
+                    </button>
+                    <button
+                        type="button"
+                        className={`manga-flow-settings__sync-segment-btn ${webdavView === 'history' ? 'is-active' : ''}`.trim()}
+                        onClick={() => onChangeView('history')}
+                    >
+                        历史版本
+                    </button>
+                </div>
+
+                {webdavView === 'config' ? (
+                    <div className="manga-flow-settings__sync-stack">
+                        <div className="manga-flow-settings__sync-action-row manga-flow-settings__sync-action-row--status">
+                            <span className="manga-flow-settings__label">连接信息</span>
+                            <div className="manga-flow-settings__sync-status-slot">
+                                {webdavStatus ? <InlineStatus state={webdavStatus} /> : null}
+                            </div>
+                            <button type="button" className="mf-button mf-button--secondary" onClick={onTest} disabled={isTestingWebDAV}>
+                                {isTestingWebDAV ? <LoaderCircle className="mf-button__spinner" size={15} /> : <RefreshCw size={15} strokeWidth={1.8} />}
+                                <span>测试连接</span>
+                            </button>
+                        </div>
+
+                        <Field label="服务器地址">
+                            <input
+                                className="manga-flow-settings__input"
+                                type="text"
+                                placeholder="https://example.com/dav/"
+                                value={webdavForm.serverUrl}
+                                onChange={(event) => onChangeField('serverUrl', event.target.value)}
+                            />
+                        </Field>
+
+                        <div className="manga-flow-settings__grid manga-flow-settings__grid--two">
+                            <Field label="用户名">
+                                <input
+                                    className="manga-flow-settings__input"
+                                    type="text"
+                                    value={webdavForm.username}
+                                    onChange={(event) => onChangeField('username', event.target.value)}
+                                />
+                            </Field>
+                            <Field label="应用密码">
+                                <PasswordField
+                                    value={webdavForm.password}
+                                    visible={showPassword}
+                                    placeholder="请输入 WebDAV 密码"
+                                    onToggleVisibility={onTogglePassword}
+                                    onChange={(value) => onChangeField('password', value)}
+                                />
+                            </Field>
+                        </div>
+
+                        <div className="manga-flow-settings__grid manga-flow-settings__grid--two">
+                            <SwitchField label="自动同步" checked={webdavForm.autoSync} onChange={(value) => onChangeField('autoSync', value)} />
+                            <SwitchField label="记住密码" checked={webdavForm.rememberPassword} onChange={(value) => onChangeField('rememberPassword', value)} />
+                        </div>
+
+                        <div className="manga-flow-settings__grid manga-flow-settings__grid--two">
+                            <Field label="同步延迟">
+                                <div className="manga-flow-settings__sync-number">
+                                    <input
+                                        className="manga-flow-settings__input"
+                                        type="number"
+                                        min={1}
+                                        max={30}
+                                        value={webdavForm.syncDelaySeconds}
+                                        onChange={(event) => onChangeField('syncDelaySeconds', Number(event.target.value) || 1)}
+                                    />
+                                    <span>秒</span>
+                                </div>
+                            </Field>
+                            <Field label="备份数量">
+                                <div className="manga-flow-settings__sync-number">
+                                    <input
+                                        className="manga-flow-settings__input"
+                                        type="number"
+                                        min={5}
+                                        max={50}
+                                        value={webdavForm.backupLimit}
+                                        onChange={(event) => onChangeField('backupLimit', Number(event.target.value) || 5)}
+                                    />
+                                    <span>份</span>
+                                </div>
+                            </Field>
+                        </div>
+
+                        <div className="manga-flow-settings__sync-footer-actions">
+                            <button type="button" className="mf-button mf-button--secondary" onClick={onPull} disabled={isPullingWebDAV}>
+                                {isPullingWebDAV ? <LoaderCircle className="mf-button__spinner" size={15} /> : <Download size={15} strokeWidth={1.8} />}
+                                <span>立即拉取</span>
+                            </button>
+                            <button type="button" className="mf-button mf-button--primary" onClick={onPush} disabled={isPushingWebDAV}>
+                                {isPushingWebDAV ? <LoaderCircle className="mf-button__spinner" size={15} /> : <Upload size={15} strokeWidth={1.8} />}
+                                <span>立即推送</span>
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="manga-flow-settings__sync-stack">
+                        <div className="manga-flow-settings__sync-action-row">
+                            <span className="manga-flow-settings__label">备份列表</span>
+                            <button type="button" className="mf-button mf-button--secondary" onClick={onRefreshHistory} disabled={isLoadingWebDAVHistory}>
+                                {isLoadingWebDAVHistory ? <LoaderCircle className="mf-button__spinner" size={15} /> : <RefreshCw size={15} strokeWidth={1.8} />}
+                                <span>刷新列表</span>
+                            </button>
+                        </div>
+
+                        <div className="manga-flow-settings__history-list">
+                            {backupItems.length > 0 ? backupItems.map((item) => {
+                                const isRestoring = activeWebDAVBackupFile === `restore:${item.fileName}`;
+                                const isDeleting = activeWebDAVBackupFile === `delete:${item.fileName}`;
+                                const isLatestBackup = latestBackupFileName === item.fileName;
+
+                                return (
+                                    <div key={item.fileName} className="manga-flow-settings__history-item">
+                                        <div className="manga-flow-settings__history-copy">
+                                            <strong>{item.fileName}</strong>
+                                            <span>{formatBackupTime(item.fileName, item.lastModified)}</span>
+                                        </div>
+                                        <div className="manga-flow-settings__history-actions">
+                                            {isLatestBackup ? <span className="manga-flow-settings__history-tag">最新</span> : null}
+                                            <button
+                                                type="button"
+                                                className="manga-flow-settings__icon-action manga-flow-settings__icon-action--restore"
+                                                onClick={() => onRestoreBackup(item.fileName)}
+                                                disabled={isRestoring || Boolean(activeWebDAVBackupFile)}
+                                                aria-label="从此版本恢复"
+                                                data-tooltip="从此版本恢复"
+                                            >
+                                                {isRestoring ? <LoaderCircle className="mf-button__spinner" size={15} /> : <RotateCcw size={15} strokeWidth={1.9} />}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="manga-flow-settings__icon-action manga-flow-settings__icon-action--delete"
+                                                onClick={() => onDeleteBackup(item.fileName)}
+                                                disabled={isDeleting || Boolean(activeWebDAVBackupFile)}
+                                                aria-label="删除此备份"
+                                                data-tooltip="删除此备份"
+                                            >
+                                                {isDeleting ? <LoaderCircle className="mf-button__spinner" size={15} /> : <Trash2 size={15} strokeWidth={1.9} />}
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            }) : (
+                                <div className="manga-flow-settings__empty">暂无历史版本</div>
+                            )}
+                        </div>
+                    </div>
+                )}
             </PaneSection>
         </>
     );
@@ -1115,6 +1492,30 @@ function renderDevTab(form: Settings, updateField: <K extends keyof Settings>(ke
             </PaneSection>
         </>
     );
+}
+
+
+function formatBackupTime(fileName: string, lastModified?: string): string {
+    const matched = fileName.match(/^mangaflow_backup_(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.json$/);
+    if (matched) {
+        const [, yyyy, mm, dd, hh, mi, ss] = matched;
+        return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+    }
+
+    if (!lastModified) return '未知时间';
+
+    const date = new Date(lastModified);
+    if (Number.isNaN(date.getTime())) {
+        return lastModified;
+    }
+
+    const yyyy = date.getFullYear();
+    const mm = `${date.getMonth() + 1}`.padStart(2, '0');
+    const dd = `${date.getDate()}`.padStart(2, '0');
+    const hh = `${date.getHours()}`.padStart(2, '0');
+    const mi = `${date.getMinutes()}`.padStart(2, '0');
+    const ss = `${date.getSeconds()}`.padStart(2, '0');
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
 }
 
 function buildServiceTestSettings(form: Settings, provider: OpenAIProvider | null): Partial<Settings> {
@@ -1214,6 +1615,47 @@ function getShortRequestErrorMessage(error: unknown, mode: 'test' | 'models'): s
 
     if (/模型列表/.test(normalizedMessage)) {
         return mode === 'models' ? '未返回模型列表' : `${prefix}，请稍后重试`;
+    }
+
+    return `${prefix}，请稍后重试`;
+}
+
+function getShortWebDAVErrorMessage(error: unknown, mode: 'test' | 'push' | 'pull' | 'history' | 'restore' | 'delete'): string {
+    const rawMessage = typeof error === 'string'
+        ? error
+        : error instanceof Error
+            ? error.message
+            : '';
+
+    const normalizedMessage = rawMessage.trim();
+    const prefixMap = {
+        test: '连接失败',
+        push: '推送失败',
+        pull: '拉取失败',
+        history: '读取失败',
+        restore: '恢复失败',
+        delete: '删除失败',
+    } as const;
+
+    const prefix = prefixMap[mode];
+    if (!normalizedMessage) {
+        return `${prefix}，请稍后重试`;
+    }
+
+    if (/401|403|unauthorized|authentication|forbidden/i.test(normalizedMessage)) {
+        return `${prefix}，请检查账号或密码`;
+    }
+
+    if (/404|not found/i.test(normalizedMessage)) {
+        return `${prefix}，请检查服务器地址`;
+    }
+
+    if (/timeout|timed out|aborterror/i.test(normalizedMessage)) {
+        return `${prefix}，请求超时`;
+    }
+
+    if (/Failed to fetch|fetch failed|networkerror|load failed/i.test(normalizedMessage)) {
+        return `${prefix}，无法连接服务器`;
     }
 
     return `${prefix}，请稍后重试`;
