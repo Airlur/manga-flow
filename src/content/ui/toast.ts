@@ -27,15 +27,18 @@ export function showToast(message: string, type: ToastType = 'info', duration = 
         info: 'i',
     };
 
-    const icon = document.createElement('span');
-    icon.className = 'manga-flow-toast__icon';
-    icon.textContent = icons[type];
-
     const text = document.createElement('span');
     text.className = 'manga-flow-toast__message';
     text.textContent = message;
 
-    toast.append(icon, text);
+    if (type !== 'info') {
+        const icon = document.createElement('span');
+        icon.className = 'manga-flow-toast__icon';
+        icon.textContent = icons[type];
+        toast.append(icon);
+    }
+
+    toast.append(text);
     container.appendChild(toast);
 
     requestAnimationFrame(() => {

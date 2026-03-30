@@ -150,6 +150,24 @@ class MangaFlow {
                 return true;
             }
 
+            if (message.type === 'DISABLE_CURRENT_SITE_FLOATING_BALL') {
+                this.disableCurrentSite()
+                    .then(() => sendResponse({ success: true }))
+                    .catch((error) => sendResponse({ success: false, error: (error as Error).message }));
+                return true;
+            }
+
+            if (message.type === 'ENABLE_CURRENT_SITE_FLOATING_BALL') {
+                this.restoreFloatingBallFromPopup()
+                    .then((visible) => sendResponse({
+                        success: true,
+                        visible,
+                        qualified: this.pageQualified,
+                    }))
+                    .catch((error) => sendResponse({ success: false, error: (error as Error).message }));
+                return true;
+            }
+
             if (message.type === 'HIDE_FLOATING_BALL') {
                 this.hideFloatingBallForTab();
                 sendResponse({ success: true });

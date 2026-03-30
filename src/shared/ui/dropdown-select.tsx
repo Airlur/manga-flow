@@ -23,6 +23,8 @@ interface DropdownSelectProps<T extends string> {
     renderOptionLeading?: (option: DropdownOption<T>, selected: boolean) => ReactNode;
     renderOptionTrailing?: (option: DropdownOption<T>, selected: boolean) => ReactNode;
     className?: string;
+    preferredDirection?: 'auto' | 'down';
+    disableMaxHeight?: boolean;
 }
 
 export function DropdownSelect<T extends string>({
@@ -37,6 +39,8 @@ export function DropdownSelect<T extends string>({
     renderOptionLeading,
     renderOptionTrailing,
     className = '',
+    preferredDirection = 'auto',
+    disableMaxHeight = false,
 }: DropdownSelectProps<T>) {
     const listboxId = useId();
     const rootRef = useRef<HTMLDivElement | null>(null);
@@ -98,8 +102,12 @@ export function DropdownSelect<T extends string>({
             const viewportHeight = window.innerHeight;
             const spaceAbove = rect.top - margin;
             const spaceBelow = viewportHeight - rect.bottom - margin;
-            const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
-            const maxHeight = Math.max(120, Math.min(260, (openAbove ? spaceAbove : spaceBelow) - gap));
+            const openAbove = preferredDirection === 'down'
+                ? false
+                : (spaceBelow < 180 && spaceAbove > spaceBelow);
+            const maxHeight = disableMaxHeight
+                ? undefined
+                : Math.max(120, Math.min(260, (openAbove ? spaceAbove : spaceBelow) - gap));
             const width = Math.min(rect.width, viewportWidth - margin * 2);
             const left = Math.min(Math.max(rect.left, margin), Math.max(margin, viewportWidth - width - margin));
 
@@ -110,7 +118,7 @@ export function DropdownSelect<T extends string>({
                         left,
                         width,
                         bottom: viewportHeight - rect.top + gap,
-                        maxHeight,
+                        ...(maxHeight ? { maxHeight } : {}),
                         zIndex: 100000000,
                     }
                     : {
@@ -118,7 +126,7 @@ export function DropdownSelect<T extends string>({
                         left,
                         width,
                         top: rect.bottom + gap,
-                        maxHeight,
+                        ...(maxHeight ? { maxHeight } : {}),
                         zIndex: 100000000,
                     }
             );
@@ -132,7 +140,7 @@ export function DropdownSelect<T extends string>({
             window.removeEventListener('resize', updatePopoverPosition);
             window.removeEventListener('scroll', updatePopoverPosition, true);
         };
-    }, [open]);
+    }, [disableMaxHeight, open, preferredDirection]);
 
     useEffect(() => {
         if (!open) return;
@@ -237,7 +245,13 @@ export function DropdownSelect<T extends string>({
 
     const dropdownContent = open ? (
         <div className="mf-select__popover" role="presentation" ref={popoverRef} style={popoverStyle}>
-            <div className="mf-select__list" id={listboxId} role="listbox" aria-label={ariaLabel}>
+            <div
+                className="mf-select__list"
+                id={listboxId}
+                role="listbox"
+                aria-label={ariaLabel}
+                style={disableMaxHeight ? { maxHeight: 'none', overflowY: 'visible' } : undefined}
+            >
                 {options.map((option, index) => {
                     const selected = option.value === value;
                     const previousGroup = index > 0 ? options[index - 1]?.group : undefined;

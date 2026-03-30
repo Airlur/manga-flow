@@ -31,13 +31,14 @@ html,
 body,
 #root {
   margin: 0;
-  min-height: 0;
-  height: auto;
+  min-height: 100%;
+  height: 100%;
 }
 
 body {
   width: 328px;
-  overflow: hidden;
+  overflow: visible;
+  min-height: 500px;
   background: linear-gradient(180deg, #ffffff 0%, #fcfcfd 100%);
   color: var(--mf-text);
   font-family: var(--mf-font-sans);
@@ -57,12 +58,15 @@ button {
 
 #root {
   padding: 10px 10px 12px;
+  overflow: visible;
+  min-height: 100%;
 }
 
 .mf-popup-shell {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+  min-height: calc(500px - 22px);
 }
 
 .mf-popup-shell__header {
@@ -144,20 +148,20 @@ button {
 .mf-popup-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .mf-popup-language-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: 8px;
+  gap: 10px;
   align-items: end;
 }
 
 .mf-popup-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -198,7 +202,7 @@ button {
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .mf-popup-inline-field {
@@ -224,10 +228,149 @@ button {
   min-width: 0;
 }
 
-.mf-popup-actions__row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.mf-popup-site-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mf-popup-site-toggle__copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mf-popup-site-toggle__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mf-text);
+}
+
+.mf-popup-site-toggle__subtitle {
+  font-size: 11px;
+  color: var(--mf-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mf-switch {
+  appearance: none;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(228, 228, 231, 0.9);
+  width: 46px;
+  height: 28px;
+  border-radius: 999px;
+  padding: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.mf-switch.is-checked {
+  background: #10b981;
+  border-color: rgba(16, 185, 129, 0.22);
+}
+
+.mf-switch:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.mf-switch__thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.14);
+  transform: translateX(0);
+  transition: transform 0.18s ease;
+}
+
+.mf-switch.is-checked .mf-switch__thumb {
+  transform: translateX(18px);
+}
+
+.mf-popup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.mf-popup-footer__account {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.mf-popup-footer__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #f8fafc;
+  color: var(--mf-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mf-popup-footer__guest {
+  font-size: 13px;
+  color: var(--mf-text);
+  white-space: nowrap;
+}
+
+.mf-popup-footer__login {
+  appearance: none;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: #ffffff;
+  color: var(--mf-text);
+  border-radius: 999px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.mf-popup-footer__login:hover {
+  background: var(--mf-surface-hover);
+  border-color: var(--mf-border-strong);
+}
+
+.mf-popup-footer__settings {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--mf-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mf-popup-footer__settings:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.mf-popup-footer__settings:hover:not(:disabled) {
+  color: var(--mf-text-secondary);
 }
 
 .mf-button {
@@ -257,6 +400,7 @@ button {
 .mf-button:focus-visible,
 .mf-select__trigger:focus-visible,
 .mf-select__option:focus-visible,
+.mf-switch:focus-visible,
 .mf-popup-language-arrow:focus-visible {
   outline: none;
   box-shadow: var(--mf-ring);
