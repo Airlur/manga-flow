@@ -72,7 +72,8 @@ export class TranslationController {
 
         const batchStartTime = Date.now();
         const total = images.length;
-        const batchSize = 3;
+        const batchSize = this.getImageBatchSize();
+        const batchDelay = this.getBatchDelayMs();
         let successCount = 0;
         let failedCount = 0;
         const aggregatedTimings: StageTimings = {
@@ -116,6 +117,11 @@ export class TranslationController {
                     failedCount++;
                     console.error('[MangaFlow] 图片翻译失败:', result.reason);
                 }
+            }
+
+            const hasNextBatch = i + batchSize < images.length;
+            if (hasNextBatch && batchDelay > 0) {
+                await new Promise((resolve) => setTimeout(resolve, batchDelay));
             }
         }
 
@@ -459,6 +465,23 @@ export class TranslationController {
             text: translations[index] || '',
             blocks: group.blocks,
         }));
+    }
+
+    private getImageBatchSize(): number {
+        const engine = this.settings?.translateEngine || 'google';
+        if (engine === 'openai') {
+            return 2;
+        }
+        return 3;
+    }
+
+    private getBatchDelayMs(): number {
+        const engine = this.settings?.translateEngine || 'google';
+        if (engine !== 'openai') {
+            return 0;
+        }
+
+        return Math.max(0, this.settings?.requestDelay || 0);
     }
 
     private filterGroupsForTranslation(groups: TextGroup[], allBlocks: TextBlock[]): TextGroup[] {

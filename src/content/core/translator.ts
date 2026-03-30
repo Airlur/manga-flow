@@ -11,6 +11,7 @@ const LANG_NAMES: Record<string, string> = {
 
 export class Translator {
     private settings: Settings | null = null;
+    private static readonly OPENAI_REQUEST_TIMEOUT_MS = 30000;
 
     private getSystemPrompt(sourceLang: string, targetLang: string): string {
         const source = LANG_NAMES[sourceLang] || '外语';
@@ -173,6 +174,7 @@ ${numberedTexts}`;
         const response = await chrome.runtime.sendMessage({
             type: 'API_REQUEST',
             url: endpoint,
+            timeoutMs: Translator.OPENAI_REQUEST_TIMEOUT_MS,
             options: {
                 method: 'POST',
                 headers: {
