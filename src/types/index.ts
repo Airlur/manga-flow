@@ -8,6 +8,43 @@ export interface OpenAIProvider {
     enabled: boolean;
 }
 
+export interface QWenConfig {
+    apiKey: string;
+    model: 'qwen-turbo' | 'qwen-plus' | 'qwen-max' | string;
+    apiBaseUrl: string;
+}
+
+export interface BilingualModeConfig {
+    enabled: boolean;
+    showOriginalText: boolean;
+    originalTextOpacity: number;
+    originalTextPosition: 'top' | 'bottom';
+}
+
+export interface AutoTranslateConfig {
+    enabled: boolean;
+    autoStartOnComicSites: boolean;
+}
+
+export interface KeyboardShortcut {
+    id: string;
+    name: string;
+    key: string;
+    ctrl: boolean;
+    alt: boolean;
+    shift: boolean;
+    enabled: boolean;
+}
+
+export interface KeyboardShortcutsConfig {
+    toggleTranslation: KeyboardShortcut;
+    clearCache: KeyboardShortcut;
+    switchEngine: KeyboardShortcut;
+    pauseOCR: KeyboardShortcut;
+    invokeSelection: KeyboardShortcut;
+    exportCurrent: KeyboardShortcut;
+}
+
 export interface FloatingBallPrefs {
     globallyDisabled: boolean;
     disabledSites: string[];
@@ -42,7 +79,7 @@ export interface WebDAVBackupItem {
 export interface Settings {
     sourceLang: 'ko' | 'ja' | 'en' | 'zh' | 'auto';
     targetLang: 'ko' | 'ja' | 'en' | 'zh';
-    translateEngine: 'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl';
+    translateEngine: 'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl' | 'qwen';
 
     apiBaseUrl: string;
     apiKey: string;
@@ -52,10 +89,16 @@ export interface Settings {
     deeplxUrl: string;
     deeplApiKey: string;
 
+    qwenConfig?: QWenConfig;
+
     fontSize: number;
     fontScale?: number;
     fontColor: string;
     maskOpacity?: number;
+
+    bilingualMode?: BilingualModeConfig;
+
+    autoTranslate?: AutoTranslateConfig;
 
     ocrEngine: 'local' | 'cloud' | 'paddle_local';
     cloudOcrKey: string;
@@ -70,6 +113,8 @@ export interface Settings {
 
     sitePolicy?: 'auto_detect' | 'whitelist_only' | 'always_show';
     siteWhitelist?: string[];
+
+    keyboardShortcuts?: KeyboardShortcutsConfig;
 }
 
 export interface OCRResult {
@@ -87,6 +132,7 @@ export interface TextBlock {
 export interface RenderGroup {
     bbox: BBox;
     text: string;
+    originalText?: string;
     blocks: TextBlock[];
 }
 
@@ -151,3 +197,24 @@ export interface SiteConfig {
 }
 
 export type FloatingBallState = 'idle' | 'translating' | 'paused' | 'completed' | 'error';
+
+export interface SelectionRegion {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+export interface ExportOptions {
+    format: 'png' | 'jpeg' | 'webp';
+    quality: number;
+    includeOriginal: boolean;
+    includeTranslation: boolean;
+}
+
+export interface ExportResult {
+    success: boolean;
+    dataUrl?: string;
+    blob?: Blob;
+    error?: string;
+}
