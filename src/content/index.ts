@@ -327,17 +327,66 @@ class MangaFlow {
         this.updateFloatingBallState('translating');
         this.startElapsedClock();
 
+        console.log('[MangaFlow] 开始翻译流程...');
+
         try {
+            // 确保所有图片都有机会加载（等待一小段时间）
+            const allImages = document.querySelectorAll<HTMLImageElement>('img');
+            console.log(`[MangaFlow] 页面共 ${allImages.length} 个 <img> 标签`);
+
+            // 检查是否有懒加载图片需要等待
+            let hasUnloadedImages = false;
+            for (const img of allImages) {
+                if (!img.complete && img.src && !img.src.includes('placeholder')) {
+                    hasUnloadedImages = true;
+                    break;
+                }
+            }
+
+            if (hasUnloadedImages) {
+                console.log('[MangaFlow] 检测到未加载完成的图片，等待 500ms...');
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
             const images = this.imageDetector.getComicImages()
                 .filter((img) => img.dataset.mfTranslated !== '1');
-            console.log(`检测到 ${images.length} 张漫画图片`);
+            console.log(`[MangaFlow] 检测到 ${images.length} 张待翻译的漫画图片`);
 
             if (images.length === 0) {
                 this.isTranslating = false;
                 this.stopElapsedClock(false);
                 this.floatingBall?.hideProgress();
                 this.updateFloatingBallState('idle');
-                showToast('当前页面未识别到可翻译的漫画图片', 'warning');
+
+                // 提供更详细的诊断信息
+                const allImgTags = document.querySelectorAll<HTMLImageElement>('img');
+                console.warn('[MangaFlow] ==========================================');
+                console.warn('[MangaFlow] ⚠️  未识别到可翻译的漫画图片');
+                console.warn('[MangaFlow] ==========================================');
+                console.warn('[MangaFlow] 页面信息:');
+                console.warn(`[MangaFlow]   URL: ${window.location.href}`);
+                console.warn(`[MangaFlow]   标题: ${document.title}`);
+                console.warn(`[MangaFlow]   <img> 标签数量: ${allImgTags.length}`);
+                console.warn('[MangaFlow]');
+                console.warn('[MangaFlow] 请检查浏览器控制台的详细日志:');
+                console.warn('[MangaFlow]   1. 打开开发者工具 (F12)');
+                console.warn('[MangaFlow]   2. 切换到 Console 标签');
+                console.warn('[MangaFlow]   3. 过滤日志输入: [MangaFlow]');
+                console.warn('[MangaFlow]   4. 重新点击翻译按钮');
+                console.warn('[MangaFlow]');
+                console.warn('[MangaFlow] 常见问题和解决方案:');
+                console.warn('[MangaFlow]   问题1: 图片使用了特殊的懒加载属性');
+                console.warn('[MangaFlow]   解决: 查看日志中检测到的懒加载属性');
+                console.warn('[MangaFlow]');
+                console.warn('[MangaFlow]   问题2: 站点配置的选择器不匹配');
+                console.warn('[MangaFlow]   解决: 查看日志中站点配置的选择器');
+                console.warn('[MangaFlow]');
+                console.warn('[MangaFlow]   问题3: 图片尺寸太小 (< 200x200)');
+                console.warn('[MangaFlow]   解决: 检查图片的 naturalWidth/naturalHeight');
+                console.warn('[MangaFlow] ==========================================');
+
+                // 显示更详细的提示给用户
+                showToast('未识别到漫画图片。请按 F12 打开控制台，过滤 "[MangaFlow]" 查看详细诊断信息', 'warning', 8000);
                 return;
             }
 
