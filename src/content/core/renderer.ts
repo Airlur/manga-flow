@@ -1,4 +1,4 @@
-﻿// 漫译 MangaFlow - 渲染器模块
+// 漫译 MangaFlow - 渲染器模块
 // 按组渲染译文
 
 import type { RenderGroup } from '../../types';
@@ -10,8 +10,14 @@ export interface RenderOptions {
     fontColor: string;
     maskOpacity?: number;
     fontFamily: string;
-    strokeColor?: string;     // 描边颜色，默认白色
-    strokeWidth?: number;     // 描边宽度，默认自动
+    strokeColor?: string;
+    strokeWidth?: number;
+    bilingualMode?: {
+        enabled: boolean;
+        showOriginalText: boolean;
+        originalTextOpacity: number;
+        originalTextPosition: 'top' | 'bottom';
+    };
 }
 
 export class Renderer {
@@ -26,6 +32,7 @@ export class Renderer {
     ): void {
         const ctx = canvas.getContext('2d')!;
         const fontFamily = options.fontFamily || 'Arial, sans-serif';
+        const bilingualMode = options.bilingualMode?.enabled && options.bilingualMode?.showOriginalText;
 
         groups.forEach((group, index) => {
             const translation = (group.text || '').trim();
@@ -37,68 +44,214 @@ export class Renderer {
             const width = Math.max(1, renderBox.x1 - renderBox.x0);
             const height = Math.max(1, renderBox.y1 - renderBox.y0);
 
-            const normalizedText = translation.replace(/\s*\n\s*/g, ' ');
-            const baseFontSize = this.getBaseFontSize(group, height);
-            const scale = options.fontScale ?? 1;
-            const minSize = Math.max(11, Math.round(baseFontSize * 0.8));
-            const maxSize = Math.min(52, Math.round(baseFontSize * 1.2));
-            const scaledBase = Math.max(minSize, Math.min(maxSize, baseFontSize * scale));
-            const singleLine = this.isShortLabel(normalizedText);
-            const layout = this.layoutText(ctx, normalizedText, width, height, fontFamily, scaledBase, singleLine, minSize, maxSize);
-
-            // 颜色策略
-            const userColor = options.fontColor || '#000000';
-            let mainColor = userColor;
-            if (stats?.isDark && userColor === '#000000') {
-                mainColor = '#FFFFFF';
+            if (bilingualMode && group.originalText) {
+                this.renderBilingual(ctx, group, stats, width, height, options, fontFamily);
+            } else {
+                this.renderSingle(ctx, group, stats, width, height, options, fontFamily);
             }
-            const strokeColor = this.getContrastColor(mainColor);
-
-            // 复杂背景遮罩
-            if (stats?.renderMode === 'mask') {
-                const hasUserOpacity = options.maskOpacity !== undefined;
-                const baseAlpha = hasUserOpacity ? options.maskOpacity! : (stats.isDark ? 0.36 : 0.24);
-                const alpha = stats.isDark && !hasUserOpacity ? Math.min(0.7, baseAlpha + 0.12) : baseAlpha;
-                const fillStyle = stats.isDark
-                    ? `rgba(0,0,0,${alpha})`
-                    : `rgba(255,255,255,${alpha})`;
-                ctx.fillStyle = fillStyle;
-                ctx.fillRect(renderBox.x0, renderBox.y0, width, height);
-            }
-
-            // 绘制文本
-            ctx.font = `bold ${layout.fontSize}px ${fontFamily}`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-
-            const lineHeight = layout.fontSize * (singleLine ? 1.05 : 1.15);
-            const totalHeight = layout.lines.length * lineHeight;
-            const startY = renderBox.y0 + (height - totalHeight) / 2 + lineHeight / 2;
-            const centerX = renderBox.x0 + width / 2;
-
-            layout.lines.forEach((line, lineIndex) => {
-                const y = startY + lineIndex * lineHeight;
-
-                let strokeWidth = Math.max(3, layout.fontSize * 0.15);
-                if (stats?.renderMode === 'mask') {
-                    strokeWidth = Math.max(4, layout.fontSize * 0.25);
-                }
-                if (this.isShortLabel(normalizedText)) {
-                    strokeWidth = Math.max(3, layout.fontSize * 0.2);
-                }
-
-                ctx.strokeStyle = strokeColor;
-                ctx.lineWidth = strokeWidth;
-                ctx.lineJoin = 'round';
-                ctx.lineCap = 'round';
-                ctx.strokeText(line, centerX, y);
-
-                ctx.fillStyle = mainColor;
-                ctx.fillText(line, centerX, y);
-            });
         });
 
         console.log(`[MangaFlow] ✅ 渲染完成 (group render)，共 ${groups.length} 个区域`);
+    }
+
+    private renderSingle(
+        ctx: CanvasRenderingContext2D,
+        group: RenderGroup,
+        stats: GroupAnalysis,
+        width: number,
+        height: number,
+        options: RenderOptions,
+        fontFamily: string
+    ): void {
+        const translation = (group.text || '').trim();
+        const renderBox = group.bbox;
+
+        const normalizedText = translation.replace(/\s*\n\s*/g, ' ');
+        const baseFontSize = this.getBaseFontSize(group, height);
+        const scale = options.fontScale ?? 1;
+        const minSize = Math.max(11, Math.round(baseFontSize * 0.8));
+        const maxSize = Math.min(52, Math.round(baseFontSize * 1.2));
+        const scaledBase = Math.max(minSize, Math.min(maxSize, baseFontSize * scale));
+        const singleLine = this.isShortLabel(normalizedText);
+        const layout = this.layoutText(ctx, normalizedText, width, height, fontFamily, scaledBase, singleLine, minSize, maxSize);
+
+        const userColor = options.fontColor || '#000000';
+        let mainColor = userColor;
+        if (stats?.isDark && userColor === '#000000') {
+            mainColor = '#FFFFFF';
+        }
+        const strokeColor = this.getContrastColor(mainColor);
+
+        if (stats?.renderMode === 'mask') {
+            const hasUserOpacity = options.maskOpacity !== undefined;
+            const baseAlpha = hasUserOpacity ? options.maskOpacity! : (stats.isDark ? 0.36 : 0.24);
+            const alpha = stats.isDark && !hasUserOpacity ? Math.min(0.7, baseAlpha + 0.12) : baseAlpha;
+            const fillStyle = stats.isDark
+                ? `rgba(0,0,0,${alpha})`
+                : `rgba(255,255,255,${alpha})`;
+            ctx.fillStyle = fillStyle;
+            ctx.fillRect(renderBox.x0, renderBox.y0, width, height);
+        }
+
+        ctx.font = `bold ${layout.fontSize}px ${fontFamily}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const lineHeight = layout.fontSize * (singleLine ? 1.05 : 1.15);
+        const totalHeight = layout.lines.length * lineHeight;
+        const startY = renderBox.y0 + (height - totalHeight) / 2 + lineHeight / 2;
+        const centerX = renderBox.x0 + width / 2;
+
+        layout.lines.forEach((line, lineIndex) => {
+            const y = startY + lineIndex * lineHeight;
+
+            let strokeWidth = Math.max(3, layout.fontSize * 0.15);
+            if (stats?.renderMode === 'mask') {
+                strokeWidth = Math.max(4, layout.fontSize * 0.25);
+            }
+            if (this.isShortLabel(normalizedText)) {
+                strokeWidth = Math.max(3, layout.fontSize * 0.2);
+            }
+
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = strokeWidth;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.strokeText(line, centerX, y);
+
+            ctx.fillStyle = mainColor;
+            ctx.fillText(line, centerX, y);
+        });
+    }
+
+    private renderBilingual(
+        ctx: CanvasRenderingContext2D,
+        group: RenderGroup,
+        stats: GroupAnalysis,
+        width: number,
+        height: number,
+        options: RenderOptions,
+        fontFamily: string
+    ): void {
+        const translation = (group.text || '').trim();
+        const originalText = (group.originalText || '').trim();
+        const renderBox = group.bbox;
+        const bilingualConfig = options.bilingualMode!;
+
+        const normalizedTranslation = translation.replace(/\s*\n\s*/g, ' ');
+        const normalizedOriginal = originalText.replace(/\s*\n\s*/g, ' ');
+
+        const scale = options.fontScale ?? 1;
+        const baseFontSize = this.getBaseFontSize(group, height);
+        const minSize = Math.max(9, Math.round(baseFontSize * 0.6));
+        const maxSize = Math.min(40, Math.round(baseFontSize * 1.0));
+        const scaledBase = Math.max(minSize, Math.min(maxSize, baseFontSize * scale));
+
+        const userColor = options.fontColor || '#000000';
+        let mainColor = userColor;
+        if (stats?.isDark && userColor === '#000000') {
+            mainColor = '#FFFFFF';
+        }
+        const strokeColor = this.getContrastColor(mainColor);
+        const originalOpacity = bilingualConfig.originalTextOpacity || 0.6;
+
+        if (stats?.renderMode === 'mask') {
+            const hasUserOpacity = options.maskOpacity !== undefined;
+            const baseAlpha = hasUserOpacity ? options.maskOpacity! : (stats.isDark ? 0.36 : 0.24);
+            const alpha = stats.isDark && !hasUserOpacity ? Math.min(0.7, baseAlpha + 0.12) : baseAlpha;
+            const fillStyle = stats.isDark
+                ? `rgba(0,0,0,${alpha})`
+                : `rgba(255,255,255,${alpha})`;
+            ctx.fillStyle = fillStyle;
+            ctx.fillRect(renderBox.x0, renderBox.y0, width, height);
+        }
+
+        const originalOnTop = bilingualConfig.originalTextPosition === 'top';
+
+        const originalSingleLine = this.isShortLabel(normalizedOriginal);
+        const translationSingleLine = this.isShortLabel(normalizedTranslation);
+
+        const availableHeight = height * 0.9;
+        const halfHeight = availableHeight / 2;
+
+        const originalLayout = this.layoutText(
+            ctx, normalizedOriginal, width, halfHeight, fontFamily,
+            Math.round(scaledBase * 0.8), originalSingleLine, minSize, Math.round(maxSize * 0.8)
+        );
+
+        const translationLayout = this.layoutText(
+            ctx, normalizedTranslation, width, halfHeight, fontFamily,
+            scaledBase, translationSingleLine, minSize, maxSize
+        );
+
+        const originalLineHeight = originalLayout.fontSize * (originalSingleLine ? 1.05 : 1.15);
+        const translationLineHeight = translationLayout.fontSize * (translationSingleLine ? 1.05 : 1.15);
+
+        const originalTotalHeight = originalLayout.lines.length * originalLineHeight;
+        const translationTotalHeight = translationLayout.lines.length * translationLineHeight;
+
+        const gap = Math.min(originalLineHeight * 0.3, 6);
+        const totalContentHeight = originalTotalHeight + translationTotalHeight + gap;
+
+        const topY = renderBox.y0 + (height - totalContentHeight) / 2;
+        const centerX = renderBox.x0 + width / 2;
+
+        let originalStartY: number;
+        let translationStartY: number;
+
+        if (originalOnTop) {
+            originalStartY = topY + originalLineHeight / 2;
+            translationStartY = topY + originalTotalHeight + gap + translationLineHeight / 2;
+        } else {
+            translationStartY = topY + translationLineHeight / 2;
+            originalStartY = topY + translationTotalHeight + gap + originalLineHeight / 2;
+        }
+
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        originalLayout.lines.forEach((line, lineIndex) => {
+            const y = originalStartY + lineIndex * originalLineHeight;
+
+            let strokeWidth = Math.max(2, originalLayout.fontSize * 0.12);
+            if (stats?.renderMode === 'mask') {
+                strokeWidth = Math.max(3, originalLayout.fontSize * 0.2);
+            }
+
+            ctx.font = `bold ${originalLayout.fontSize}px ${fontFamily}`;
+            ctx.globalAlpha = originalOpacity;
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = strokeWidth;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.strokeText(line, centerX, y);
+
+            ctx.fillStyle = mainColor;
+            ctx.fillText(line, centerX, y);
+            ctx.globalAlpha = 1;
+        });
+
+        translationLayout.lines.forEach((line, lineIndex) => {
+            const y = translationStartY + lineIndex * translationLineHeight;
+
+            let strokeWidth = Math.max(3, translationLayout.fontSize * 0.15);
+            if (stats?.renderMode === 'mask') {
+                strokeWidth = Math.max(4, translationLayout.fontSize * 0.25);
+            }
+            if (this.isShortLabel(normalizedTranslation)) {
+                strokeWidth = Math.max(3, translationLayout.fontSize * 0.2);
+            }
+
+            ctx.font = `bold ${translationLayout.fontSize}px ${fontFamily}`;
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = strokeWidth;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.strokeText(line, centerX, y);
+
+            ctx.fillStyle = mainColor;
+            ctx.fillText(line, centerX, y);
+        });
     }
 
     private getBaseFontSize(group: RenderGroup, boxHeight: number): number {
