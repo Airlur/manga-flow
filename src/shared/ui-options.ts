@@ -21,12 +21,19 @@ export const TARGET_LANGUAGE_OPTIONS: AppOption<'zh' | 'ko' | 'ja' | 'en'>[] = [
     { value: 'en', label: '英语', shortLabel: 'EN' },
 ];
 
-export const TRANSLATION_ENGINE_OPTIONS: AppOption<'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl'>[] = [
+export const TRANSLATION_ENGINE_OPTIONS: AppOption<'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl' | 'qwen'>[] = [
     { value: 'openai', label: 'OpenAI 兼容 API', group: 'AI 翻译' },
+    { value: 'qwen', label: '通义千问 (阿里云)', group: 'AI 翻译' },
     { value: 'microsoft', label: 'Microsoft Translator', group: '常规翻译' },
     { value: 'google', label: 'Google Translate', group: '常规翻译' },
     { value: 'deepl', label: 'DeepL 官方 API', group: '常规翻译' },
     { value: 'deeplx', label: 'DeepLX', group: '常规翻译' },
+];
+
+export const QWEN_MODEL_OPTIONS: AppOption<'qwen-turbo' | 'qwen-plus' | 'qwen-max'>[] = [
+    { value: 'qwen-turbo', label: 'qwen-turbo (经济版)' },
+    { value: 'qwen-plus', label: 'qwen-plus (标准版)' },
+    { value: 'qwen-max', label: 'qwen-max (高级版)' },
 ];
 
 export const POPUP_SOURCE_LANGUAGE_OPTIONS: AppOption<'ko' | 'ja' | 'en' | 'zh'>[] = [
@@ -43,8 +50,9 @@ export const POPUP_TARGET_LANGUAGE_OPTIONS: AppOption<'zh' | 'ko' | 'ja' | 'en'>
     { value: 'zh', label: '简体中文' },
 ];
 
-export const POPUP_TRANSLATION_ENGINE_OPTIONS: AppOption<'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl'>[] = [
+export const POPUP_TRANSLATION_ENGINE_OPTIONS: AppOption<'microsoft' | 'google' | 'openai' | 'deeplx' | 'deepl' | 'qwen'>[] = [
     { value: 'openai', label: 'OpenAI 兼容', group: 'AI 翻译' },
+    { value: 'qwen', label: '通义千问', group: 'AI 翻译' },
     { value: 'microsoft', label: 'Microsoft Translator', group: '常规翻译' },
     { value: 'google', label: 'Google Translate', group: '常规翻译' },
     { value: 'deepl', label: 'DeepL', group: '常规翻译' },

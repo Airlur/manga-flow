@@ -67,17 +67,85 @@ export class OCREngine {
             await this.worker.terminate();
         }
 
-        console.log(`[MangaFlow] 📖 初始化本地 OCR，语言: ${tessLang}`);
+        console.log(`[MangaFlow] 📖 初始化本地 Tesseract OCR，语言: ${tessLang}`);
+        console.log(`[MangaFlow] ⚠️  注意：Tesseract 需要从 CDN 下载语言包，可能需要较长时间或被网络限制`);
         const startTime = performance.now();
 
         try {
-            this.worker = await Tesseract.createWorker(tessLang, 1);
+            // 设置超时
+            const timeoutMs = 60000; // 60 秒超时
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => {
+                    reject(new Error(`Tesseract 初始化超时 (${timeoutMs / 1000}秒)。可能的原因：\n` +
+                        `  1. CDN 被网络限制（常见于中国大陆）\n` +
+                        `  2. 网络连接问题\n` +
+                        `\n建议解决方案：\n` +
+                        `  - 使用 Google Cloud Vision（需要 API Key）\n` +
+                        `  - 使用本地 PaddleOCR 服务\n` +
+                        `  - 检查网络连接或使用 VPN`));
+                }, timeoutMs);
+            });
+
+            // 尝试初始化 Tesseract
+            const initPromise = Tesseract.createWorker(tessLang, 1, {
+                logger: (m) => {
+                    if (this.debugMode) {
+                        console.log(`[MangaFlow][Tesseract] ${m.status}: ${m.progress ? (m.progress * 100).toFixed(0) + '%' : ''}`);
+                    }
+                },
+            });
+
+            this.worker = await Promise.race([initPromise, timeoutPromise]);
             this.currentLang = tessLang;
             this.tessInitialized = true;
-            console.log(`[MangaFlow] ✅ 本地 OCR 初始化完成 (${(performance.now() - startTime).toFixed(0)}ms)`);
+            console.log(`[MangaFlow] ✅ 本地 Tesseract OCR 初始化完成 (${(performance.now() - startTime).toFixed(0)}ms)`);
         } catch (error) {
-            console.error('[MangaFlow] ❌ 本地 OCR 初始化失败:', error);
-            throw error;
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            console.error('[MangaFlow] ❌ 本地 Tesseract OCR 初始化失败:');
+            console.error('[MangaFlow]    错误信息:', errorMsg);
+            console.error('[MangaFlow]');
+            console.error('[MangaFlow] ==========================================');
+            console.error('[MangaFlow] ⚠️  Tesseract 初始化失败常见原因:');
+            console.error('[MangaFlow] ==========================================');
+            console.error('[MangaFlow]');
+            console.error('[MangaFlow] 原因 1: CDN 被网络限制（中国大陆用户常见）');
+            console.error('[MangaFlow]   说明: Tesseract 需要从 jsdelivr CDN 下载:');
+            console.error('[MangaFlow]   - worker.min.js (~200KB)');
+            console.error('[MangaFlow]   - 语言训练数据 (~15MB for kor, ~15MB for jpn)');
+            console.error('[MangaFlow]');
+            console.error('[MangaFlow] 原因 2: 首次使用需要下载语言包');
+            console.error('[MangaFlow]   说明: 首次使用 Tesseract 会下载语言数据');
+            console.error('[MangaFlow]   韩语(kor): ~15MB, 日语(jpn): ~15MB');
+            console.error('[MangaFlow]');
+            console.error('[MangaFlow] ==========================================');
+            console.error('[MangaFlow] 🛠️  解决方案:');
+            console.error('[MangaFlow] ==========================================');
+            console.error('[MangaFlow]');
+            console.error('[MangaFlow] 方案 A: 使用 Google Cloud Vision（推荐）');
+            console.error('[MangaFlow]   1. 打开 MangaFlow 设置面板');
+            console.error('[MangaFlow]   2. 切换到 "OCR" 标签');
+            console.error('[MangaFlow]   3. 选择 "Google Cloud Vision"');
+            console.error('[MangaFlow]   4. 输入 API Key（免费额度足够日常使用）');
+            console.error('[MangaFlow]');
+            console.error('[MangaFlow] 方案 B: 使用本地 PaddleOCR 服务');
+            console.error('[MangaFlow]   1. 安装 PaddleOCR 本地服务（Python）');
+            console.error('[MangaFlow]   2. 在设置中选择 "PaddleOCR 本地服务"');
+            console.error('[MangaFlow]   3. 配置服务地址（默认: http://127.0.0.1:18733）');
+            console.error('[MangaFlow]');
+            console.error('[MangaFlow] 方案 C: 检查网络/使用 VPN');
+            console.error('[MangaFlow]   确保能访问: https://cdn.jsdelivr.net');
+            console.error('[MangaFlow] ==========================================');
+
+            // 抛出更友好的错误信息
+            throw new Error(
+                'Tesseract OCR 初始化失败。\n\n' +
+                '可能原因：CDN 被网络限制（常见于中国大陆）\n\n' +
+                '解决方案：\n' +
+                '1. 使用 Google Cloud Vision（需要 API Key）\n' +
+                '2. 使用本地 PaddleOCR 服务\n' +
+                '3. 检查网络连接或使用 VPN\n\n' +
+                '详细信息请查看浏览器控制台日志。'
+            );
         }
     }
 

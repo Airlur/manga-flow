@@ -1,4 +1,4 @@
-﻿import { DEFAULT_SETTINGS, getPrimaryOpenAIProvider, normalizeSettings } from '../config/default-settings';
+import { DEFAULT_SETTINGS, getPrimaryOpenAIProvider, normalizeSettings } from '../config/default-settings';
 import type { OpenAIProvider, Settings } from '../types';
 
 interface APIRequest {
@@ -78,26 +78,73 @@ async function handleAPIRequest(url: string, options: RequestInit = {}, timeoutM
 }
 
 async function fetchImageAsBase64(imageUrl: string): Promise<string> {
-    const response = await fetch(imageUrl);
+    console.log(`[MangaFlow][Service Worker] 尝试获取图片: ${imageUrl}`);
+    
+    // 尝试最多 3 次
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const response = await fetch(imageUrl, {
+                credentials: 'include', // 包含 cookie（用于需要登录的站点）
+                cache: 'force-cache',    // 优先使用缓存
+            });
 
-    if (!response.ok) {
-        throw new Error(`图片获取失败：${response.status}`);
-    }
-
-    const blob = await response.blob();
-
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            if (typeof reader.result === 'string') {
-                resolve(reader.result);
-            } else {
-                reject(new Error('读取图片失败'));
+            if (!response.ok) {
+                console.warn(`[MangaFlow][Service Worker] 图片获取失败 (尝试 ${attempt}/${maxRetries}): ${response.status} ${response.statusText}`);
+                
+                // 如果是 404，可能需要检查 URL 格式
+                if (response.status === 404) {
+                    console.warn(`[MangaFlow][Service Worker] URL 可能有问题: ${imageUrl}`);
+                    console.warn(`[MangaFlow][Service Worker] 建议检查: 1. URL 是否正确 2. 是否需要登录 3. 图片是否存在`);
+                }
+                
+                lastError = new Error(`图片获取失败：${response.status} ${response.statusText}`);
+                
+                // 如果不是最后一次尝试，等待后重试
+                if (attempt < maxRetries) {
+                    await new Promise(r => setTimeout(r, 500 * attempt));
+                    continue;
+                }
+                
+                throw lastError;
             }
-        };
-        reader.onerror = () => reject(new Error('读取图片失败'));
-        reader.readAsDataURL(blob);
-    });
+
+            console.log(`[MangaFlow][Service Worker] 图片获取成功 (尝试 ${attempt}/${maxRetries})`);
+            
+            const blob = await response.blob();
+            
+            console.log(`[MangaFlow][Service Worker] 图片大小: ${blob.size} 字节, 类型: ${blob.type}`);
+
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    if (typeof reader.result === 'string') {
+                        console.log(`[MangaFlow][Service Worker] 图片转换为 Base64 成功`);
+                        resolve(reader.result);
+                    } else {
+                        reject(new Error('读取图片失败'));
+                    }
+                };
+                reader.onerror = () => reject(new Error('读取图片失败'));
+                reader.readAsDataURL(blob);
+            });
+        } catch (error) {
+            console.error(`[MangaFlow][Service Worker] 获取图片异常 (尝试 ${attempt}/${maxRetries}):`, error);
+            lastError = error instanceof Error ? error : new Error(String(error));
+            
+            if (attempt < maxRetries) {
+                await new Promise(r => setTimeout(r, 500 * attempt));
+                continue;
+            }
+            
+            throw lastError;
+        }
+    }
+    
+    // 理论上不会执行到这里，因为 for 循环里已经处理了
+    throw lastError || new Error('获取图片失败');
 }
 
 async function handleTestTranslation(

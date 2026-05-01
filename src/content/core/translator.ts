@@ -1,5 +1,5 @@
-﻿import { getEnabledOpenAIProviders, normalizeSettings } from '../../config/default-settings';
-import type { OpenAIProvider, Settings, TranslationResult } from '../../types';
+import { DEFAULT_QWEN_API_BASE_URL, getEnabledOpenAIProviders, normalizeSettings } from '../../config/default-settings';
+import type { OpenAIProvider, QWenConfig, Settings, TranslationResult } from '../../types';
 
 const LANG_NAMES: Record<string, string> = {
     ko: '韩语',
@@ -83,6 +83,9 @@ export class Translator {
                         case 'deepl':
                             translations = await this.callDeepLBatch(texts, sourceLang, targetLang);
                             break;
+                        case 'qwen':
+                            translations = await this.callQWenBatch(texts, sourceLang, targetLang);
+                            break;
                         case 'openai':
                         default:
                             translations = await this.callOpenAIBatch(texts, sourceLang, targetLang);
@@ -155,6 +158,82 @@ ${numberedTexts}`;
         }
 
         throw lastError || new Error('OpenAI 兼容服务商调用失败');
+    }
+
+    private async callQWenBatch(
+        texts: string[],
+        sourceLang: string,
+        targetLang: string
+    ): Promise<string[]> {
+        const qwenConfig = this.getQWenConfig();
+
+        if (!qwenConfig.apiKey) {
+            throw new Error('请先配置通义千问 API Key');
+        }
+
+        if (!qwenConfig.model) {
+            throw new Error('请先选择通义千问模型');
+        }
+
+        const numberedTexts = texts.map((text, index) => `[${index + 1}] ${text}`).join('\n');
+        const source = LANG_NAMES[sourceLang] || '外语';
+        const target = LANG_NAMES[targetLang] || '中文';
+        const userPrompt = `请将以下${source}漫画对话翻译成${target}。
+每行以 [数字] 开头，请保持相同格式返回翻译结果。只输出翻译，不要解释或添加额外内容。
+${numberedTexts}`;
+
+        const content = await this.requestQWenProvider(qwenConfig, sourceLang, targetLang, userPrompt);
+        return this.parseNumberedTranslations(content, texts.length);
+    }
+
+    private getQWenConfig(): QWenConfig {
+        if (!this.settings?.qwenConfig) {
+            return {
+                apiKey: '',
+                model: 'qwen-turbo',
+                apiBaseUrl: DEFAULT_QWEN_API_BASE_URL,
+            };
+        }
+        return this.settings.qwenConfig;
+    }
+
+    private async requestQWenProvider(
+        config: QWenConfig,
+        sourceLang: string,
+        targetLang: string,
+        userPrompt: string
+    ): Promise<string> {
+        const baseUrl = config.apiBaseUrl.replace(/\/+$/, '') || DEFAULT_QWEN_API_BASE_URL;
+        const endpoint = `${baseUrl}/v1/chat/completions`;
+        const model = config.model || 'qwen-turbo';
+
+        const response = await chrome.runtime.sendMessage({
+            type: 'API_REQUEST',
+            url: endpoint,
+            timeoutMs: Translator.OPENAI_REQUEST_TIMEOUT_MS,
+            options: {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${config.apiKey}`,
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: 'system', content: this.getSystemPrompt(sourceLang, targetLang) },
+                        { role: 'user', content: userPrompt },
+                    ],
+                    temperature: 0.3,
+                    max_tokens: 4000,
+                }),
+            },
+        });
+
+        if (!response.success) {
+            throw new Error(response.error || '通义千问 API 请求失败');
+        }
+
+        return response.data?.choices?.[0]?.message?.content?.trim() || '';
     }
 
     private async requestOpenAIProvider(

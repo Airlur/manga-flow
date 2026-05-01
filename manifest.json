@@ -1,4 +1,4 @@
-﻿{
+{
   "manifest_version": 3,
   "name": "漫译 MangaFlow",
   "version": "1.0.0",
@@ -6,7 +6,8 @@
   "author": "MangaFlow",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "downloads"
   ],
   "host_permissions": [
     "https://comix.to/*",

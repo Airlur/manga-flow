@@ -379,6 +379,7 @@ export class TranslationController {
             fontColor: this.settings?.fontColor || '#000000',
             maskOpacity: this.settings?.maskOpacity,
             fontFamily: 'Arial, sans-serif',
+            bilingualMode: this.settings?.bilingualMode,
         });
 
         // 5. 替换原图
@@ -471,6 +472,7 @@ export class TranslationController {
         return groups.map((group, index) => ({
             bbox: group.bbox,
             text: translations[index] || '',
+            originalText: group.text,
             blocks: group.blocks,
         }));
     }
