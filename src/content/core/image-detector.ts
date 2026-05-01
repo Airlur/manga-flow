@@ -81,20 +81,25 @@ export class ImageDetector {
     }
 
     // 检查是否为有效的图片 URL
+    // 重要：从 <img> 元素获取的 URL，浏览器已经知道这是图片
+    // 我们只需要排除明显的占位图，不强制要求图片扩展名
     private isValidImageUrl(url: string): boolean {
         if (!url) {
             this.logDebug('URL 为空');
             return false;
         }
         
-        // 排除占位图
+        const urlLower = url.toLowerCase();
+        
+        // 排除明显的占位图
         const placeholders = [
-            'placeholder', 'loading', 'blank', 
-            'data:image/gif', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ',
-            'about:blank', 'javascript:'
+            'placeholder', 'loading', 'blank', 'spacer',
+            'data:image/gif;base64,R0lGODlh',  // 1x1 透明 GIF
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ',  // 1x1 透明 PNG
+            'about:blank', 'javascript:',
+            'data:image/svg+xml,%3Csvg'  // SVG 占位图
         ];
         
-        const urlLower = url.toLowerCase();
         for (const p of placeholders) {
             if (urlLower.includes(p)) {
                 this.logDebug(`URL 包含占位关键词: ${p}`);
@@ -102,16 +107,37 @@ export class ImageDetector {
             }
         }
         
-        // 检查是否是图片 URL
-        const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
-        const hasValidExt = validExtensions.some(ext => urlLower.includes(ext));
+        // 检查是否是有效的 URL 格式
+        // 接受：http://, https://, /, ./, ../, data:image/
+        const isValidFormat = 
+            urlLower.startsWith('http://') || 
+            urlLower.startsWith('https://') || 
+            urlLower.startsWith('/') || 
+            urlLower.startsWith('./') || 
+            urlLower.startsWith('../') ||
+            urlLower.startsWith('data:image/');
         
-        // 或者是 data URL
-        const isDataUrl = urlLower.startsWith('data:image/');
+        if (!isValidFormat) {
+            // 尝试检查是否有图片扩展名（作为额外验证）
+            const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
+            const hasValidExt = validExtensions.some(ext => {
+                // 检查扩展名是否在 URL 末尾（避免匹配路径中的 .jpg 等）
+                const extPos = urlLower.lastIndexOf(ext);
+                return extPos > 0 && extPos >= urlLower.length - 10;
+            });
+            
+            if (!hasValidExt) {
+                this.logDebug(`URL 格式不被识别: ${url}`);
+                return false;
+            }
+        }
         
-        if (!hasValidExt && !isDataUrl) {
-            this.logDebug(`URL 不是有效的图片格式: ${url}`);
-            return false;
+        // 记录 URL 信息（用于调试）
+        const hasExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].some(ext => 
+            urlLower.includes(ext)
+        );
+        if (!hasExt) {
+            this.logDebug(`URL 没有标准图片扩展名，但仍然接受: ${url.substring(0, Math.min(80, url.length))}...`);
         }
         
         return true;
@@ -320,6 +346,7 @@ export class ImageDetector {
         this.logDebug(`sizePass: ${sizePass}`);
         this.logDebug(`containerCheck: ${containerCheck}`);
         this.logDebug(`selectorMatch: ${selectorMatch}`);
+        this.logDebug(`width: ${width}, height: ${height}`);
 
         // 如果选择器匹配，直接通过
         if (selectorMatch) {
@@ -339,10 +366,43 @@ export class ImageDetector {
             return true;
         }
 
+        // 超大图（>= 800x600），即使不在容器内也可能是漫画图片
+        // 很多漫画网站的图片可能不在预期的容器内
+        if (width >= 800 && height >= 600) {
+            this.logDebug('✓ 最终结果: 超大图 (>=800x600)，识别为漫画图片');
+            return true;
+        }
+
+        // 中等尺寸图片（>= 500x500），不在容器内但可能是漫画
+        // 宽松判断，避免漏掉
+        if (width >= 500 && height >= 500) {
+            this.logDebug('✓ 最终结果: 中等尺寸图片 (>=500x500)，宽松识别为漫画图片');
+            return true;
+        }
+
         // 如果图片未加载完成，我们暂时无法确定，但可以基于其他条件判断
         if ((width === 0 || height === 0) && (isSequentialImage || containerCheck)) {
             this.logDebug('⚠ 最终结果: 图片未加载，但 URL/容器匹配，暂时识别为漫画图片（可能后续需要重新检查）');
             return true;
+        }
+
+        // 图片未加载，但没有其他匹配条件
+        // 我们仍然尝试识别，因为很多懒加载图片此时还没有尺寸
+        if (width === 0 || height === 0) {
+            this.logDebug('⚠ 最终结果: 图片未加载，没有尺寸信息，尝试宽松识别');
+            // 检查 URL 是否有图片扩展名
+            const hasExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].some(ext => 
+                srcLower.includes(ext)
+            );
+            if (hasExt) {
+                this.logDebug('✓ 最终结果: URL 有图片扩展名，识别为漫画图片');
+                return true;
+            }
+            // 如果是 http/https URL，也可能是图片
+            if (srcLower.startsWith('http://') || srcLower.startsWith('https://')) {
+                this.logDebug('⚠ 最终结果: 是 http/https URL，但不确定是否为漫画图片，暂时接受');
+                return true;
+            }
         }
 
         this.logDebug('❌ 最终结果: 不满足任何条件，不识别为漫画图片');
